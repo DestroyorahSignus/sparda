@@ -1,0 +1,68 @@
+# SPARDA — all hyperparameters (retrieval, graph, generation).
+# See SPARDA_BUILD_PLAN.md §1 (artifacts), §4.3 (biencoder), §6 (engine).
+
+# ── Artifact reuse contract (REUSE FIRST) — §1 ─────────────────────────────
+# On startup the pipeline checks each path; if present it LOADS, if absent it
+# BUILDS once (bootstrap fallback). SPARDA's marginal A100 target is 0h.
+artifacts:
+  dante_biencoder:     "models/dante_biencoder_final"          # DANTE checkpoint — DO NOT retrain
+  dante_splade:        "naver/splade-v3"                       # pretrained, no fine-tune by default
+  dante_colbert:       "answerdotai/answerai-colbert-small-v1"
+  faiss_index:         "indices/dante_faiss.index"             # built once by DANTE
+  bm25_index:          "indices/dante_bm25.pkl"
+  splade_index:        "indices/dante_splade.pkl"
+  vergil_graph:        "artifacts/product_graph.gpickle"       # VERGIL graph — DO NOT rebuild
+  communities:         "artifacts/communities.json"            # Leiden output — cached
+  community_summaries: "artifacts/community_summaries.json"    # LLM summaries — cached, reuse
+  summary_embeddings:  "artifacts/summary_embeddings.npy"
+  qwen_gguf:           "models/qwen2.5-7b-instruct-q4_k_m.gguf"
+  rebuild_if_missing:  true   # bootstrap fallback; set false to fail loudly if artifacts absent
+
+# ── Bi-encoder (DANTE) — §4.3 ──────────────────────────────────────────────
+biencoder:
+  model_name: "answerdotai/ModernBERT-base"
+  max_seq_length: 256
+  epochs: 3
+  batch_size: 128
+  learning_rate: 2e-5
+  warmup_ratio: 0.1
+  scheduler: cosine
+  loss: MultipleNegativesRankingLoss
+  num_hard_negatives: 5
+  output_dim: 768
+
+# ── Retrieval fusion / rerank — §4.5 / §4.6 ────────────────────────────────
+retrieval:
+  rrf_k: 60
+  rrf_top_n: 200
+  leg_top_k: 1000        # per-leg (dense / sparse / bm25) candidate depth
+  rerank_top_k: 20       # ColBERT MaxSim output depth
+
+# ── Graph (VERGIL) — §5 ────────────────────────────────────────────────────
+graph:
+  similarity_threshold: 0.85   # similar_to edge cosine cutoff (cross-brand only)
+  similarity_top_k: 5          # top-k neighbors per product
+  features_per_product: 5      # TF-IDF feature nodes per product
+  leiden_resolution: 1.0
+
+# ── Generation (Qwen) — §6.5 ───────────────────────────────────────────────
+generation:
+  n_ctx: 4096            # NOT 8192 — T4 VRAM (RISKS R7)
+  n_gpu_layers: -1
+  temperature: 0.1
+  max_tokens: 600
+
+# ── Router — §6.1 ──────────────────────────────────────────────────────────
+router:
+  llm_fallback_threshold: 0.5
+
+# ── Coverage — §6.0 ────────────────────────────────────────────────────────
+coverage:
+  min_join_rate_for_multi_hop: 0.05
+
+# ── Data — §3 ──────────────────────────────────────────────────────────────
+data:
+  esci_locale: "us"
+  esci_small_version: 1
+  amazon_category: "Electronics"
+  amazon_subsample: 50000

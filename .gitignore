@@ -1,0 +1,44 @@
+# ── Python ──
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.installed.cfg
+*.egg
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# ── Jupyter ──
+*.ipynb_checkpoints
+
+# ── OS / editor ──
+.DS_Store
+.idea/
+.vscode/
+
+# ── SPARDA artifacts / large binaries ──
+# IMPORTANT: ANCHOR these to the repo root with a leading slash.
+# A bare `models/` (no leading slash) matches ANY directory named `models`
+# anywhere in the tree — that bug swallowed DANTE's `models/` package source.
+# Keep the leading slash so only the top-level artifact dirs are ignored.
+/models/
+/indices/
+/artifacts/
+/data/raw/
+*.gguf
+*.faiss
+*.index
+*.pkl
+*.npy
+*.gpickle

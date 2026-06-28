@@ -1,0 +1,17 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sparda"
+version = "0.1.0"
+description = "Unified e-commerce search + discovery: DANTE retrieval + VERGIL GraphRAG, routed"
+requires-python = ">=3.10"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = { file = ["requirements.txt"] }
+
+# SPARDA packages ONLY — dante/vergil are pip-installed deps, NOT vendored (§2.1).
+[tool.setuptools.packages.find]
+include = ["engine*", "eval*", "demo*", "data*"]
