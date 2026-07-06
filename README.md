@@ -48,8 +48,10 @@ from vergil import (
   `add_similarity_edges(G, encoder=dante.biencoder)` — shared state by injection, never by
   importing internals.
 
-> `requirements.txt` currently leaves `dante`/`vergil` **unversioned** — the `v0.1.0` tags do
-> not exist yet. Once tagged, pin both to `@v0.1.0` for reproducibility.
+> `requirements.txt` pins `dante @ …@v0.2.0` and `vergil @ …@v0.1.0` for reproducible
+> **local** installs. The **Modal** images do *not* pip-install them — they **vendor** the
+> package source via `add_local_dir` from sibling clones (`../dante-src`, `../vergil-src`),
+> which avoids private-repo auth at image-build time.
 
 ## The Complement-edge advantage (§3.3)
 
@@ -100,6 +102,31 @@ print(result["route"], result["answer"])
 for c in result["citations"]:
     print(c["type"], c["name"], "—", c["evidence"])
 ```
+
+## Run on Modal (link · e2e · deploy the demo)
+
+The Modal images **vendor** DANTE + VERGIL from sibling clones (no private-repo auth).
+Clone them next to this repo **once**, then run:
+
+```bash
+# 0) one-time: sibling clones the images vendor via add_local_dir
+git clone git@github.com:DestroyorahSignus/dante.git  ../dante-src   # -> ../dante-src/dante
+git clone git@github.com:DestroyorahSignus/vergil.git ../vergil-src  # -> ../vergil-src/vergil
+pip install modal && modal token new
+
+# 1) LINK: measure the ASIN join rate + enrich VERGIL's graph with ESCI complement edges
+modal run modal_run.py --stage link      # CPU; writes /sparda-artifacts/{enriched_graph.pkl,link_stats.json}
+
+# 2) E2E: run the §8.3 typed queries through the full SpardaPipeline + router accuracy
+modal run modal_run.py --stage e2e       # A100-80GB; writes /sparda-artifacts/sparda_e2e.json
+
+# 3) DEPLOY the demo → a persistent, shareable *.modal.run URL
+modal deploy modal_demo.py               # -> https://<workspace>--sparda-demo-web.modal.run
+```
+
+`dante-artifacts` and `vergil-artifacts` are mounted **read-only**; SPARDA writes only its
+own `sparda-artifacts`. One shared **Qwen3-4B-Instruct-2507** generator serves the router,
+entity extractor, and all three answer paths.
 
 ## Results (fill in from `eval/`)
 

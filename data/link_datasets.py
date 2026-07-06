@@ -12,29 +12,74 @@ accessory signal Amazon-2023 lacks).
 from __future__ import annotations
 
 
-def link_esci_to_amazon(esci_df, amazon_df):
+def _norm_asin(value) -> str:
+    """Normalize an ASIN/product_id for joining: cast to str, strip, uppercase.
+
+    Both datasets are Amazon-derived (DANTE's ESCI ``product_id`` and VERGIL's
+    Amazon-2023 ``parent_asin`` are the SAME ASIN keyspace), but casing/whitespace
+    can drift across mirrors, so normalize before comparing (§3.3 / RISKS R1).
     """
-    Link ESCI products to Amazon Reviews metadata by ASIN/product_id.
-    Where they overlap, products get BOTH retrieval labels AND graph edges.
-    Where they don't overlap, that's fine — graph covers Amazon-only products,
-    ESCI covers search-only products.
+    return str(value).strip().upper()
 
-    The overlap enriches local search: DANTE retrieves a product, VERGIL knows
-    what category/brand/feature neighbours and which ESCI-Complement "goes-with"
-    products it connects to.
 
-    Implementation notes (SPARDA_BUILD_PLAN.md §3.3 / §6.0 / RISKS R1):
-    - Left join ESCI products onto Amazon metadata by product_id / parent_asin.
-    - Normalize ASINs first (uppercase, strip) and try the variant ASIN too.
-    - Not all will match — that's expected and OK (measure the join rate, §6.0/R1).
-
-    Returns a ``linked_db`` mapping ``product_id -> {"asin": ..., <retrieval fields>}``.
+def link_esci_to_amazon(dante_catalog_df, vergil_meta_df) -> dict:
     """
-    raise NotImplementedError(
-        "TODO: SPARDA_BUILD_PLAN.md §3.3 — implement the normalized ASIN left-join "
-        "(uppercase/strip, try variant ASIN + parent_asin), returning linked_db; "
-        "the plan provides only the docstring contract for this function."
-    )
+    Measure the ASIN overlap between DANTE's retrieval catalog and VERGIL's graph.
+
+    Inner-joins DANTE ``catalog.parquet.product_id`` × VERGIL
+    ``electronics_meta.parquet.parent_asin`` on the normalized ASIN key. This overlap
+    is the headline "does the graph enrich retrieval" number (§6.0 / RISKS R1): where
+    the two datasets overlap, a DANTE-retrieved product also lives in VERGIL's graph,
+    so it can be expanded with brand/category/feature/``similar_to`` neighbours AND the
+    SPARDA-only ``complement_of`` "goes-with" edges. Where they don't overlap, that's
+    fine and expected — the graph still covers Amazon-only products and ESCI still
+    covers search-only products (graceful degradation).
+
+    Args:
+        dante_catalog_df: DANTE ``catalog.parquet`` — must have a ``product_id`` column
+            (these ARE ASINs; the catalog is ``[product_id, product_text]``).
+        vergil_meta_df: VERGIL ``electronics_meta.parquet`` — must have a
+            ``parent_asin`` column (the graph node id).
+
+    Returns:
+        A stats dict::
+
+            {
+              "n_dante":     <# distinct DANTE ASINs>,
+              "n_vergil":    <# distinct VERGIL parent_asins>,
+              "n_overlap":   <# ASINs present in BOTH>,
+              "join_rate":   n_overlap / n_dante,   # fraction of DANTE catalog in the graph
+              "overlap_ids": [<normalized overlapping ASINs, sorted>],
+              "linked_db":   {asin: {"asin": asin}},  # convenience map keyed by overlap ASIN
+                                                      # (feeds engine.coverage / add_complement_edges)
+            }
+
+        ``join_rate`` is reported HONESTLY — whatever the measured overlap is (§6.0/R1).
+    """
+    dante_asins = {
+        _norm_asin(v) for v in dante_catalog_df["product_id"].tolist()
+        if str(v).strip() and str(v).strip().lower() != "nan"
+    }
+    vergil_asins = {
+        _norm_asin(v) for v in vergil_meta_df["parent_asin"].tolist()
+        if str(v).strip() and str(v).strip().lower() != "nan"
+    }
+
+    overlap = dante_asins & vergil_asins
+    n_dante, n_vergil, n_overlap = len(dante_asins), len(vergil_asins), len(overlap)
+    join_rate = (n_overlap / n_dante) if n_dante else 0.0
+    overlap_ids = sorted(overlap)
+
+    return {
+        "n_dante": n_dante,
+        "n_vergil": n_vergil,
+        "n_overlap": n_overlap,
+        "join_rate": join_rate,
+        "overlap_ids": overlap_ids,
+        # keyed by ASIN so it plugs straight into engine.coverage.global_coverage
+        # (graph.has_node(asin)) and into add_complement_edges' linked_db[p]["asin"].
+        "linked_db": {a: {"asin": a} for a in overlap_ids},
+    }
 
 
 def add_complement_edges(G, esci_df, linked_db, encoder=None, min_pairs: int = 1):
