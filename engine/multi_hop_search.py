@@ -69,13 +69,20 @@ def multi_hop_search(query: str, entities: list[str], G: "nx.Graph",
     # Step 4: Build reasoning paths
     paths = []
     for result in reranked[:10]:
-        pid = result.get("product", {}).get("product_id", "")
+        # `dante.colbert.rerank` returns the candidate dicts unchanged (product_id at the
+        # TOP level) — NOT nested under "product". The old result["product"]["product_id"]
+        # yielded "" → nx.shortest_path(G, start, "") raised NodeNotFound (a sibling of
+        # NetworkXNoPath, so it was NOT caught) → the whole multi_hop route crashed and the
+        # demo UI died on its flagship example. Read the id correctly and catch both. (G1)
+        pid = result.get("product_id") or result.get("product", {}).get("product_id", "")
+        if not pid or pid not in G:
+            continue
         for start in matched_nodes:
             try:
                 path = nx.shortest_path(G, start, pid)
                 path_str = _describe_path(G, path)
                 paths.append({"product_id": pid, "path": path_str})
-            except nx.NetworkXNoPath:
+            except (nx.NetworkXNoPath, nx.NodeNotFound):
                 continue
 
     return {
