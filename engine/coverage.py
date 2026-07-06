@@ -22,20 +22,33 @@ class CoverageReport:
 
 
 def global_coverage(linked_db: dict, graph) -> CoverageReport:
-    """Computed ONCE at startup from data/link_datasets.py output."""
+    """Computed ONCE at startup.
+
+    Path availability is gated on the GRAPH's own properties, NOT on the ESCI<->graph ASIN
+    join rate. That join only matters for *opportunistic* DANTE-product -> graph-entry
+    expansion (handled per-query by ``query_coverage``); the two graph-native routes stand
+    on their own:
+      * ``multi_hop`` links the QUERY's entities to graph nodes (fuzzy match) and traverses
+        VERGIL's graph — it never needs a DANTE product to be in the graph.
+      * ``global`` reads the community summaries.
+    An earlier version gated ``multi_hop`` on ``rate >= 0.05``; with the real 0.82% ASIN
+    overlap that silently disabled multi-hop for every query (router degraded → local),
+    even though VERGIL's graph has ~570K edges. ``join_rate`` is still reported HONESTLY as
+    an informational metric.
+    """
     asins = list(linked_db.keys())
-    if not asins:
-        return CoverageReport(0.0, ["local"], "no linked products; graph paths disabled")
-    in_graph = sum(1 for a in asins if graph.has_node(a))
-    rate = in_graph / len(asins)
+    in_graph = sum(1 for a in asins if graph.has_node(a)) if asins else 0
+    rate = (in_graph / len(asins)) if asins else 0.0
+    n_edges = graph.number_of_edges()
+    n_comm = graph.graph.get("num_communities", 0)
     paths = ["local"]                                  # DANTE always works
-    if rate >= 0.05:                                   # graph has *some* coverage
+    if n_edges > 0:                                    # graph traversal is self-contained
         paths += ["multi_hop"]
-    if graph.graph.get("num_communities", 0) > 0:      # communities were built
+    if n_comm > 0:                                     # communities were built
         paths += ["global"]
-    note = (f"ASIN join rate {rate:.1%}; "
-            + ("graph paths enabled" if rate >= 0.05
-               else "graph too sparse — local-only, graph used only for opportunistic expansion"))
+    note = (f"graph {graph.number_of_nodes():,} nodes / {n_edges:,} edges / {n_comm} "
+            f"communities → paths {paths}; ESCI<->graph ASIN join {rate:.2%} "
+            f"(informational — gates only opportunistic DANTE→graph expansion)")
     return CoverageReport(rate, paths, note)
 
 
