@@ -112,7 +112,10 @@ def dante_config(dante_artifacts: str) -> dict:
         "serving": {
             "catalog_path": f"{dante_artifacts}/data/catalog.parquet",
             "index_dir": f"{dante_artifacts}/index_gte",
-            "rrf_k": 60,
+            # RRF k=30: the v0.2 ablation (and v0.1's) shows k<=30 beats k=60 on nDCG@10
+            # (Dense+SPLADE 0.4483@k30 vs 0.4461@k60) at equal recall — an ablation-backed
+            # serving default. (CE-gte-modernbert reranker regressed on this stack → not used.)
+            "rrf_k": 30,
             "top_n": 200,
             "leg_top_k": 1000,
         },
