@@ -95,7 +95,7 @@ def web():
     from fastapi import FastAPI
     from gradio import mount_gradio_app
 
-    from demo.app import create_demo
+    from demo.app import _HEAD, create_demo
 
     from sparda_runtime import build_pipeline
 
@@ -106,4 +106,7 @@ def web():
     demo.queue(max_size=16)   # queue so concurrent requests don't drop
 
     fastapi_app = FastAPI()
-    return mount_gradio_app(fastapi_app, demo, path="/")
+    # head=_HEAD injects the particle-canvas <script>. gradio 6.17/6.18 IGNORES head= passed
+    # to the Blocks() constructor on the mounted path (css= works, head= doesn't), so it must
+    # be passed to mount_gradio_app here — the documented injection point for mounted apps.
+    return mount_gradio_app(fastapi_app, demo, path="/", head=_HEAD)
