@@ -58,7 +58,9 @@ image = (
                                        # the web container crash-loops on boot: ImportError)
         "numpy==2.2.6",
         "fastapi>=0.110",              # ASGI host for gradio.mount_gradio_app
-        "gradio>=4.0.0",
+        "gradio==5.9.1",              # PINNED: unpinned >=4.0.0 drifted to gradio 6 (dropped
+                                      # the Chatbot type= kwarg + forced messages format);
+                                      # 5.9.1 is stable, supports type="messages" + msg format.
         "pyvis>=0.3.2",
     )
     .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false"})
