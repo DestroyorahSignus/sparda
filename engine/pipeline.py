@@ -140,13 +140,40 @@ class SpardaPipeline:
                  "evidence": p["path"]} for p in paths[:10]]
 
     def _extract_entities(self, query: str) -> list[str]:
+        """Always returns a flat list[str]. The LLM may emit a JSON list of strings, a list
+        of dicts (e.g. [{"brand":"Sony"}]), a {"entities":[...]} object, or prose-wrapped
+        JSON — all get flattened to strings (multi_hop_search does entity.lower(), so a dict
+        here was crashing every multi-hop query)."""
+        import json
+        import re
+
         resp = self.llm.generate(ENTITY_EXTRACTION_PROMPT.format(query=query),
                                   max_tokens=100, temperature=0.0)
+
+        def _flatten(obj) -> list[str]:
+            if isinstance(obj, str):
+                return [obj.strip()] if obj.strip() else []
+            if isinstance(obj, dict):
+                return [s for v in obj.values() for s in _flatten(v)]
+            if isinstance(obj, (list, tuple)):
+                return [s for v in obj for s in _flatten(v)]
+            return []
+
+        ents: list[str] = []
         try:
-            import json
-            return json.loads(resp)
+            m = re.search(r"\[.*\]|\{.*\}", resp, re.DOTALL)  # tolerate prose/markdown wrap
+            ents = _flatten(json.loads(m.group(0)) if m else resp)
         except Exception:
-            return [w for w in query.split() if len(w) > 3]
+            ents = []
+        # dedupe (case-insensitive), keep order, cap
+        seen, out = set(), []
+        for e in ents:
+            e = str(e).strip()
+            if e and e.lower() not in seen:
+                seen.add(e.lower())
+                out.append(e)
+        # fallback to salient query tokens if extraction yielded nothing
+        return out[:10] or [w for w in query.split() if len(w) > 3]
 
     def _fmt_products(self, results):
         # format top 10 products as numbered list

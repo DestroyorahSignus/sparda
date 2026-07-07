@@ -31,9 +31,12 @@ def multi_hop_search(query: str, entities: list[str], G: "nx.Graph",
     from rapidfuzz import fuzz
     matched_nodes = []
     for entity in entities:
+        entity = str(entity).strip()          # defensive: never trust upstream shape
+        if not entity:
+            continue
         best_match, best_score = None, 0
         for node, data in G.nodes(data=True):
-            name = data.get("name", "")
+            name = str(data.get("name", ""))
             score = fuzz.partial_ratio(entity.lower(), name.lower())
             if score > best_score and score > 70:
                 best_match, best_score = node, score

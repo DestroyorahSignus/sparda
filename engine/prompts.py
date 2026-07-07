@@ -50,6 +50,7 @@ Recommend the most relevant ones.
 Answer:"""
 
 ENTITY_EXTRACTION_PROMPT = """Extract product entities from this query.
-Return a JSON list of entities (brand names, product names, features, categories).
+Return ONLY a JSON array of plain strings (brand names, product names, features,
+categories) — e.g. ["Sony", "WH-1000XM5", "noise cancelling"]. No objects, no keys, no prose.
 Query: "{query}"
 Entities:"""
