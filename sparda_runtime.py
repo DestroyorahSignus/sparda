@@ -94,12 +94,16 @@ def dante_config(dante_artifacts: str) -> dict:
 
     Mirrors DANTE's own ``_default_config`` (modal_train.py) with the artifact root
     swapped to the SPARDA mount point. Layout on the volume:
-      ``{root}/biencoder_final``  — SentenceTransformer bi-encoder
-      ``{root}/index/``           — dense.faiss, bm25.pkl, splade.npz, product_ids.json
+      ``{root}/biencoder_gte_hn`` — DANTE v0.2 winner bi-encoder (gte-modernbert-base +
+                                    hard negatives; Dense R@200 0.698 vs v0.1 0.627)
+      ``{root}/index_gte/``       — dense.faiss, bm25.pkl, splade.npz, product_ids.json
       ``{root}/data/catalog.parquet`` — [product_id, product_text] retrieval pool
+    (G2 promotion: v0.2 ablation picked gte-modernbert-HN as the dense winner + Dense+SPLADE
+    as the best fusion (R@200 0.7296 / nDCG@10 0.4461). The v0.1 biencoder_final/index remain
+    on the volume for reproducibility.)
     """
     return {
-        "biencoder": {"path": f"{dante_artifacts}/biencoder_final"},
+        "biencoder": {"path": f"{dante_artifacts}/biencoder_gte_hn"},
         "splade": {
             "model": "opensearch-project/opensearch-neural-sparse-encoding-v2-distill",
             "max_length": 256,
@@ -107,7 +111,7 @@ def dante_config(dante_artifacts: str) -> dict:
         "colbert": {"model": "answerdotai/answerai-colbert-small-v1"},
         "serving": {
             "catalog_path": f"{dante_artifacts}/data/catalog.parquet",
-            "index_dir": f"{dante_artifacts}/index",
+            "index_dir": f"{dante_artifacts}/index_gte",
             "rrf_k": 60,
             "top_n": 200,
             "leg_top_k": 1000,
