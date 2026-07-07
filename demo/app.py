@@ -48,7 +48,7 @@ def create_demo(pipeline: "SpardaPipeline"):
 
         with gr.Row():
             with gr.Column(scale=3):
-                chatbot = gr.Chatbot(height=450, label="Chat", type="messages")
+                chatbot = gr.Chatbot(height=450, label="Chat")  # gradio 6 = messages-only, no type=
                 query = gr.Textbox(placeholder="Try: 'What accessories from Sony work with the WH-1000XM5?'",
                                    label="Query")
                 with gr.Row():

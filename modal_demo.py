@@ -58,9 +58,10 @@ image = (
                                        # the web container crash-loops on boot: ImportError)
         "numpy==2.2.6",
         "fastapi>=0.110",              # ASGI host for gradio.mount_gradio_app
-        "gradio==5.9.1",              # PINNED: unpinned >=4.0.0 drifted to gradio 6 (dropped
-                                      # the Chatbot type= kwarg + forced messages format);
-                                      # 5.9.1 is stable, supports type="messages" + msg format.
+        "gradio==6.19.0",             # PINNED: unpinned >=4.0.0 drifted (6.17→6.19 across
+                                      # builds). Gradio 6 is messages-format-only (no Chatbot
+                                      # type= kwarg) AND is the only line that coexists with
+                                      # pandas 3.0.3 (gradio 5 pins older pandas → conflict).
         "pyvis>=0.3.2",
     )
     .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false"})
