@@ -21,6 +21,13 @@ _GROUNDING = """RULES (follow strictly):
   omit that comparison entirely.
 - Only state a specification/feature if it is written in that item's text below; do not add
   numbers (zoom, battery, etc.) from memory.
+- These items are catalog search results ranked by TEXT RELEVANCE, not by reviews, ratings,
+  or sales. Do NOT treat promotional words in an item's own title (e.g. "Best", "#1",
+  "Award-winning", "Premium", "CNET's Award") as objective quality — that is the seller's
+  marketing, not a verified fact, so never quote or endorse it as a reason to recommend.
+- When the user asks for the "best"/"top" of something, do not crown a winner on quality you
+  cannot verify. Present the most RELEVANT matching items neutrally and make clear these are
+  the closest catalog matches (by features/price the user can compare), not a quality ranking.
 - If the listed items do not actually answer the question, say so plainly and describe the
   closest options that ARE listed — do not fabricate a better-fitting product."""
 

@@ -100,7 +100,9 @@ _HERO = """
   <div class="sparda-title">⚔ SPARDA</div>
   <div class="sparda-tag">One router over two retrieval engines — it reads your query and routes to
     <b>DANTE</b> (multi-signal hybrid product search) or <b>VERGIL</b> (a GraphRAG product knowledge graph),
-    then answers with grounded citations.</div>
+    then answers with grounded citations. Searches the <b>Amazon ESCI</b> research catalog (~352K products)
+    ranked by <i>relevance</i> — not by reviews or sales, so "best"-style queries surface the closest
+    matches, not curated picks.</div>
   <div class="sparda-legend">
     <span class="chip chip-local">DANTE · product search</span>
     <span class="chip chip-global">VERGIL · market clusters</span>
@@ -177,7 +179,7 @@ def create_demo(pipeline: "SpardaPipeline"):
                     clear = gr.ClearButton([chatbot, query], value="Clear", size="sm")
                 gr.Examples(
                     examples=[
-                        "best wireless noise cancelling headphones under $300",
+                        "wireless noise cancelling headphones under $300",
                         "What accessories from Sony work with the WH-1000XM5?",
                         "Compare the smart home ecosystems — Alexa vs Google Home",
                         "USB-C chargers from Anker that people buy with MacBooks",
