@@ -52,6 +52,10 @@ image = (
         "python-igraph>=0.11.0",
         "rapidfuzz>=3.6.0",
         "pandas==3.0.3",
+        "pyarrow>=17,<21",             # parquet engine for pd.read_parquet(catalog) — the
+                                       # e2e image got it transitively via datasets; the demo
+                                       # image has no datasets, so it must be explicit (else
+                                       # the web container crash-loops on boot: ImportError)
         "numpy==2.2.6",
         "fastapi>=0.110",              # ASGI host for gradio.mount_gradio_app
         "gradio>=4.0.0",
