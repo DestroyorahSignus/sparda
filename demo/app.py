@@ -140,7 +140,7 @@ def create_demo(pipeline: "SpardaPipeline"):
             yield "", history
             return
         cites = "\n".join(f"- `{c['type']}` {c['name']} — {c['evidence']}"
-                          for c in citations[:6])
+                          for c in citations[:10])  # show all retrieved so the cited #N is visible
         history[-1]["content"] = (f"{badge}\n\n{acc}\n\n"
                                   f"<details><summary>citations</summary>\n\n{cites}\n</details>")
         yield "", history
