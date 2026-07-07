@@ -41,63 +41,78 @@ class SpardaPipeline:
                  self.coverage.join_rate * 100, self.coverage.available_paths)
         self._cache: dict[tuple, dict] = {}
 
-    def answer(self, query: str) -> dict:
-        # 0. Routing (heuristic → LLM fallback → coverage-aware degrade), logged + cacheable
+    def _prepare(self, query: str):
+        """Route + retrieve + build (decision, prompt, citations, context). Shared by the
+        blocking ``answer`` and the streaming ``answer_stream`` so routing logic lives once."""
         decision = self.router.classify(query, coverage=self.coverage)
-        cache_key = (query.strip().lower(), decision.route)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
         log.info("ROUTE q=%r → %s (%s, conf=%.2f) %s",
                  query, decision.route, decision.method, decision.confidence, decision.reason)
 
-        citations: list[dict] = []
+        def _local(dec):
+            ctx = local_search(query, self.dante, self.graph, self.dante.product_db)
+            cites = self._cite_products(ctx["dante_results"]) + self._cite_graph(ctx["graph_context"])
+            pr = LOCAL_PROMPT.format(
+                dante_results=self._fmt_products(ctx["dante_results"]),
+                graph_context=self._fmt_graph(ctx["graph_context"]), query=query)
+            return dec, pr, cites, ctx
 
         if decision.route == "local":
-            context = local_search(query, self.dante, self.graph, self.dante.product_db)
-            citations = self._cite_products(context["dante_results"]) + \
-                        self._cite_graph(context["graph_context"])
-            prompt = LOCAL_PROMPT.format(
-                dante_results=self._fmt_products(context["dante_results"]),
-                graph_context=self._fmt_graph(context["graph_context"]),
-                query=query,
-            )
-        elif decision.route == "global":
+            return _local(decision)
+        if decision.route == "global":
             context = global_search(query, self.communities, self.summary_embs, self.encoder)
             citations = self._cite_communities(context["communities"])
             prompt = GLOBAL_PROMPT.format(
-                community_summaries=self._fmt_communities(context["communities"]),
-                query=query,
-            )
-        else:  # multi_hop
-            entities = self._extract_entities(query)
-            context = multi_hop_search(query, entities, self.graph, self.dante)
-            # Graceful fallback: entity-linking found nothing → fall back to local search
-            if not context.get("discovered"):
-                log.info("multi_hop entity-link miss → falling back to local search")
-                decision = RouteDecision("local", "degraded", decision.confidence,
-                                         reason="multi-hop found no graph entities → local")
-                return self._run_local(query, decision)
-            citations = self._cite_products(context["discovered"]) + \
-                        self._cite_paths(context["paths"])
-            prompt = MULTI_HOP_PROMPT.format(
-                source_entities=context["source_entities"],
-                discovered_products=self._fmt_products(context["discovered"]),
-                paths=self._fmt_paths(context["paths"]),
-                query=query,
-            )
+                community_summaries=self._fmt_communities(context["communities"]), query=query)
+            return decision, prompt, citations, context
+        # multi_hop
+        entities = self._extract_entities(query)
+        context = multi_hop_search(query, entities, self.graph, self.dante)
+        if not context.get("discovered"):  # entity-link miss → degrade to local
+            log.info("multi_hop entity-link miss → falling back to local search")
+            return _local(RouteDecision("local", "degraded", decision.confidence,
+                                        reason="multi-hop found no graph entities → local"))
+        citations = self._cite_products(context["discovered"]) + self._cite_paths(context["paths"])
+        prompt = MULTI_HOP_PROMPT.format(
+            source_entities=context["source_entities"],
+            discovered_products=self._fmt_products(context["discovered"]),
+            paths=self._fmt_paths(context["paths"]), query=query)
+        return decision, prompt, citations, context
 
-        answer_text = self.llm.generate(prompt, max_tokens=600)
-
-        result = {                                   # ── UNIFIED ANSWER SCHEMA ──
+    def _pack(self, decision, answer_text, citations, context) -> dict:
+        return {                                     # ── UNIFIED ANSWER SCHEMA ──
             "answer": answer_text,
             "route": decision.route,
-            "routing": decision.__dict__,            # method, confidence, reason, available_paths
-            "citations": citations,                  # flat, typed provenance list
+            "routing": decision.__dict__,
+            "citations": citations,
             "join_rate": self.coverage.join_rate,
-            "context": context,                      # raw, for debugging/eval
+            "context": context,
         }
+
+    def answer(self, query: str) -> dict:
+        # _prepare classifies ONCE (routing may call the LLM for ambiguous queries — don't
+        # double it just to build a cache key); cache-check on the resolved route after.
+        decision, prompt, citations, context = self._prepare(query)
+        cache_key = (query.strip().lower(), decision.route)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        result = self._pack(decision, self.llm.generate(prompt, max_tokens=600), citations, context)
         self._cache[cache_key] = result
         return result
+
+    def answer_stream(self, query: str):
+        """Yield (partial_answer_text, decision, citations, context) as the LLM streams, so a
+        UI can render tokens live and the connection never goes idle. Caches the final result."""
+        decision, prompt, citations, context = self._prepare(query)
+        cache_key = (query.strip().lower(), decision.route)
+        if cache_key in self._cache:  # replay cached answer in one chunk
+            r = self._cache[cache_key]
+            yield r["answer"], decision, r["citations"], r["context"]
+            return
+        acc = ""
+        for chunk in self.llm.generate_stream(prompt, max_tokens=600):
+            acc += chunk
+            yield acc, decision, citations, context
+        self._cache[cache_key] = self._pack(decision, acc, citations, context)
 
     def _run_local(self, query, decision):
         context = local_search(query, self.dante, self.graph, self.dante.product_db)

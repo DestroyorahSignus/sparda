@@ -15,23 +15,34 @@ def create_demo(pipeline: "SpardaPipeline"):
     import gradio as gr
 
     def chat(query, history):
-        result = pipeline.answer(query)
-        route = result["route"]
-        routing = result["routing"]
-        answer = result["answer"]
-
-        badge = {"local": "🔍 DANTE search", "global": "🌐 VERGIL communities",
-                 "multi_hop": "🔗 VERGIL graph traversal"}[route]
-        # SHOW the routing decision: heuristic vs LLM fallback vs degraded, and why.
-        why = f"_{routing['method']} · conf {routing['confidence']:.2f} · {routing['reason']}_"
-        cites = "\n".join(f"- `{c['type']}` {c['name']} — {c['evidence']}"
-                          for c in result["citations"][:6])
-        formatted = (f"**{badge}**  {why}\n\n{answer}\n\n"
-                     f"<details><summary>citations</summary>\n\n{cites}\n</details>")
-        # Gradio 5 Chatbot uses type="messages" → append role/content dicts, not (q,a) tuples.
+        # STREAMING generator: yield partial answers as the LLM produces tokens. This keeps
+        # the Gradio SSE connection fed with data throughout the ~15-25s 30B generation —
+        # otherwise the idle connection is dropped by the proxy ("connection lost"). Also
+        # much better UX. Messages format (role/content dicts) for gradio 6.
+        badges = {"local": "🔍 DANTE search", "global": "🌐 VERGIL communities",
+                  "multi_hop": "🔗 VERGIL graph traversal"}
         history = history + [{"role": "user", "content": query},
-                             {"role": "assistant", "content": formatted}]
-        return "", history
+                             {"role": "assistant", "content": "_🔍 routing + retrieving…_"}]
+        yield "", history
+
+        badge = why = None
+        acc, citations = "", []
+        for acc, decision, citations, _ctx in pipeline.answer_stream(query):
+            if badge is None:
+                badge = badges.get(decision.route, decision.route)
+                why = f"_{decision.method} · conf {decision.confidence:.2f} · {decision.reason}_"
+            history[-1]["content"] = f"**{badge}**  {why}\n\n{acc}▌"
+            yield "", history
+
+        if badge is None:  # stream produced nothing
+            history[-1]["content"] = "_(no response generated)_"
+            yield "", history
+            return
+        cites = "\n".join(f"- `{c['type']}` {c['name']} — {c['evidence']}"
+                          for c in citations[:6])
+        history[-1]["content"] = (f"**{badge}**  {why}\n\n{acc}\n\n"
+                                  f"<details><summary>citations</summary>\n\n{cites}\n</details>")
+        yield "", history
 
     def show_graph(query):
         """Render relevant subgraph as interactive pyvis HTML."""
