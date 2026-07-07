@@ -1,25 +1,22 @@
-"""SPARDA — the DEPLOYED demo UI (a persistent, reachable *.modal.run URL).
+"""SPARDA — the DEPLOYED demo (a persistent, reachable *.modal.run URL).
 
-================================================================================
-DEPLOY  (the orchestrator runs this; produces the shareable URL)
-================================================================================
-    # 1) clone dante + vergil as SIBLINGS of this repo (private-repo-auth-free vendoring):
-    #      git clone git@github.com:DestroyorahSignus/dante.git  ../dante-src
-    #      git clone git@github.com:DestroyorahSignus/vergil.git ../vergil-src
-    # 2) (optional but recommended) build the enriched graph first so multi-hop uses the
-    #    SPARDA-only complement edges:  modal run modal_run.py --stage link
-    # 3) deploy the persistent web app:
-    #
-    #      modal deploy modal_demo.py
-    #
-    #    → prints a persistent URL like  https://<workspace>--sparda-demo-web.modal.run
+A hand-built single-page frontend (web/index.html — minimalist, constellation-particle
+background, streaming) served by a FastAPI backend that exposes a small JSON/SSE API:
+  GET  /              → the static UI
+  POST /api/query     → Server-Sent-Events stream (route meta → answer tokens → citations)
+  GET  /api/graph?q=  → pyvis subgraph HTML
+  GET  /api/splade?q= → {term: weight}
+  GET  /api/health    → warm check
 
-The image + vendoring + read-only artifact volumes are identical to ``modal_run.py``.
-A single container builds the ``SpardaPipeline`` ONCE at container start (inside the ASGI
-factory, NOT at import) — DanteSearchEngine + VERGIL graph + one shared Qwen3-4B — then
-serves the Gradio Blocks UI (route badge + answer + citations + pyvis subgraph + SPLADE
-expansion) via Modal's ASGI pattern. ``scaledown_window=300`` keeps the (expensive) warm
-model resident for 5 min of idle before scaling to zero.
+Deploy:  (clone dante + vergil as siblings ../dante-src ../vergil-src first)
+    modal deploy modal_demo.py   → https://<workspace>--sparda-demo-web.modal.run
+
+The pipeline (DanteSearchEngine + VERGIL graph + one shared Qwen3-30B-A3B) is LAZY-loaded on
+the first /api/query, NOT at container start — so the page itself serves fast; only the first
+query pays the model cold-load. ``scaledown_window=1200`` keeps the warm model resident for
+20 min of idle. The frontend is also Vercel-deployable as-is (static): host web/ on a CDN and
+set ``window.SPARDA_API`` to this Modal URL (CORS is open). Image/vendoring/read-only volumes
+match ``modal_run.py``.
 """
 
 import os
@@ -69,6 +66,7 @@ image = (
     # VENDOR dante + vergil source (copy=True layers precede the runtime mount).
     .add_local_dir(DANTE_PKG, "/root/dante", copy=True)
     .add_local_dir(VERGIL_PKG, "/root/vergil", copy=True)
+    .add_local_dir(os.path.join(HERE, "web"), "/root/web", copy=True)   # the static frontend
     .add_local_python_source("engine", "eval", "data", "demo", "sparda_runtime")
 )
 
@@ -86,27 +84,100 @@ VOLUMES = {
 }
 
 
-@app.function(image=image, volumes=VOLUMES, gpu="A100-80GB", scaledown_window=300,
+@app.function(image=image, volumes=VOLUMES, gpu="A100-80GB", scaledown_window=1200,
               timeout=60 * 60)
-@modal.concurrent(max_inputs=8)   # one warm model serves several UI requests concurrently
+@modal.concurrent(max_inputs=8)   # one warm model serves several requests concurrently
 @modal.asgi_app()
 def web():
-    """ASGI factory: build the pipeline ONCE per container, then mount the Gradio UI."""
-    from fastapi import FastAPI
-    from gradio import mount_gradio_app
+    """ASGI factory: a FastAPI app serving the static frontend + a JSON/SSE query API.
 
-    from demo.app import _HEAD, create_demo
+    The heavy pipeline is LAZY-loaded on first /api/query (thread-safe singleton), so the
+    page itself serves fast — only the first query pays the model cold-load.
+    """
+    import json
+    import pathlib
+    import threading
 
+    from fastapi import FastAPI, Request
+    from fastapi.middleware.cors import CORSMiddleware
+    from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+
+    from demo.graph_viz import render_subgraph
     from sparda_runtime import build_pipeline
 
-    # Built at container start (inside the factory, not at import) — one shared model.
-    pipeline = build_pipeline(enriched_graph_path="/sparda-artifacts/enriched_graph.pkl")
+    _cache: dict = {}
+    _lock = threading.Lock()
 
-    demo = create_demo(pipeline)
-    demo.queue(max_size=16)   # queue so concurrent requests don't drop
+    def get_pipeline():
+        if "p" not in _cache:
+            with _lock:
+                if "p" not in _cache:
+                    _cache["p"] = build_pipeline(
+                        enriched_graph_path="/sparda-artifacts/enriched_graph.pkl")
+        return _cache["p"]
 
-    fastapi_app = FastAPI()
-    # head=_HEAD injects the particle-canvas <script>. gradio 6.17/6.18 IGNORES head= passed
-    # to the Blocks() constructor on the mounted path (css= works, head= doesn't), so it must
-    # be passed to mount_gradio_app here — the documented injection point for mounted apps.
-    return mount_gradio_app(fastapi_app, demo, path="/", head=_HEAD)
+    def sse(event: str, data: dict) -> str:
+        return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+    index_html = pathlib.Path("/root/web/index.html").read_text()
+
+    api = FastAPI(title="SPARDA")
+    api.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+                       allow_headers=["*"])  # open CORS so a Vercel/CDN frontend can call it
+
+    @api.get("/")
+    def index():
+        return HTMLResponse(index_html)
+
+    @api.get("/api/health")
+    def health():
+        return {"ok": True, "warm": "p" in _cache}
+
+    @api.post("/api/query")
+    async def query(req: Request):
+        body = await req.json()
+        q = (body.get("query") or "").strip()
+
+        def gen():
+            if not q:
+                yield sse("error", {"message": "empty query"})
+                return
+            try:
+                pipe = get_pipeline()
+                sent_meta = False
+                acc, citations, decision = "", [], None
+                for acc, decision, citations, _ctx in pipe.answer_stream(q):
+                    if not sent_meta and decision is not None:
+                        yield sse("meta", {"route": decision.route, "method": decision.method,
+                                           "confidence": round(decision.confidence, 2)})
+                        sent_meta = True
+                    yield sse("token", {"text": acc})
+                yield sse("cite", {"citations": [
+                    {"type": c["type"], "name": c["name"], "evidence": c["evidence"]}
+                    for c in (citations or [])[:10]]})
+                yield sse("done", {})
+            except Exception as exc:  # surface errors to the client instead of a dead stream
+                yield sse("error", {"message": f"{type(exc).__name__}: {exc}"})
+
+        return StreamingResponse(gen(), media_type="text/event-stream")
+
+    @api.get("/api/graph")
+    def graph(q: str = ""):
+        if not q.strip():
+            return HTMLResponse("")
+        try:
+            return HTMLResponse(render_subgraph(get_pipeline(), q))
+        except Exception:
+            return HTMLResponse("")
+
+    @api.get("/api/splade")
+    def splade(q: str = ""):
+        if not q.strip():
+            return JSONResponse({})
+        try:
+            exp = get_pipeline().dante.splade.visualize_expansion(q, top_k_terms=15)
+            return JSONResponse({t: round(w, 2) for t, w in exp})
+        except Exception:
+            return JSONResponse({})
+
+    return api

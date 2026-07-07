@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>SPARDA — hybrid product search + GraphRAG</title>
+<meta name="description" content="A query router over two retrieval engines: DANTE hybrid product search and VERGIL GraphRAG, over the Amazon ESCI catalog." />
+<style>
+  :root{
+    --bg:#08090c; --fg:#e8eaf0; --dim:#8a90a0; --faint:#5f6572;
+    --acc:139,92,246; --accent:rgb(139,92,246);
+    --glass:rgba(255,255,255,.03); --glass2:rgba(255,255,255,.05);
+    --line:rgba(255,255,255,.08); --line2:rgba(255,255,255,.12);
+    --mono:ui-monospace,"SF Mono","Cascadia Code",Menlo,monospace;
+    --sans:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--fg); font-family:var(--sans);
+    -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  }
+  #bg{position:fixed;inset:0;z-index:-1;pointer-events:none}
+  .wrap{max-width:1120px;margin:0 auto;padding:34px 22px 80px}
+  a{color:#b9a4f5;text-decoration:none}
+
+  /* hero */
+  .hero{animation:rise .55s ease both}
+  .wordmark{font-size:34px;font-weight:700;letter-spacing:9px;color:#f3f4f8;
+    text-shadow:0 0 26px rgba(var(--acc),.4);margin:0}
+  .wordmark::after{content:"";display:block;width:56px;height:2px;margin-top:11px;
+    background:linear-gradient(90deg,var(--accent),transparent)}
+  .sub{color:var(--dim);font-size:13.5px;line-height:1.65;max-width:720px;margin:13px 0 0;font-weight:300}
+  .sub b{color:#cfd3de;font-weight:500}
+
+  /* command bar */
+  .cmd{display:flex;gap:8px;align-items:center;margin:22px 0 10px;padding:8px 8px 8px 18px;
+    background:var(--glass2);border:1px solid var(--line2);border-radius:16px;
+    backdrop-filter:blur(16px) saturate(130%);-webkit-backdrop-filter:blur(16px) saturate(130%);
+    box-shadow:0 22px 55px -34px rgba(var(--acc),.55);transition:border-color .25s,box-shadow .25s;
+    animation:rise .55s ease .06s both}
+  .cmd:focus-within{border-color:rgba(var(--acc),.6);
+    box-shadow:0 0 0 3px rgba(var(--acc),.18),0 22px 60px -30px rgba(var(--acc),.6)}
+  .cmd input{flex:1;background:transparent;border:none;outline:none;color:#eef0f5;
+    font-size:16px;font-family:var(--sans)}
+  .cmd input::placeholder{color:#6b7180}
+  .cmd button{border:none;cursor:pointer;border-radius:12px;padding:11px 20px;font-weight:600;
+    letter-spacing:.3px;color:#fff;background:linear-gradient(92deg,rgba(var(--acc),.95),rgba(120,90,240,.95));
+    transition:transform .15s,filter .2s}
+  .cmd button:hover{transform:translateY(-1px);filter:brightness(1.08)}
+  .cmd button:disabled{opacity:.5;cursor:default;transform:none}
+  .hint{color:var(--faint);font-size:11px;letter-spacing:.3px;font-family:var(--mono);margin:2px 2px 16px}
+
+  /* chips */
+  .chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px;animation:rise .55s ease .12s both}
+  .chip{background:var(--glass);border:1px solid var(--line2);color:#aab0c0;border-radius:999px;
+    font-size:12px;padding:6px 13px;cursor:pointer;transition:transform .15s,border-color .2s,color .2s,background .2s;font-family:var(--sans)}
+  .chip:hover{transform:translateY(-1px);color:#e8eaf0;border-color:rgba(var(--acc),.5);background:rgba(var(--acc),.10)}
+
+  /* layout */
+  .grid{display:grid;grid-template-columns:1.7fr 1fr;gap:16px;animation:rise .55s ease .18s both}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--glass);border:1px solid var(--line);border-radius:16px;
+    backdrop-filter:blur(14px) saturate(120%);-webkit-backdrop-filter:blur(14px) saturate(120%);padding:16px}
+  .panel.answer{min-height:340px}
+
+  /* answer */
+  .badge{display:inline-block;font-size:10px;font-weight:600;letter-spacing:.7px;padding:3px 10px;
+    border-radius:999px;text-transform:uppercase;color:#c9b8f5;background:rgba(var(--acc),.14);
+    border:1px solid rgba(var(--acc),.35)}
+  .meta{color:#6b7180;font-size:11px;margin-left:8px;font-family:var(--mono)}
+  .ans{margin-top:14px;line-height:1.7;font-size:14.5px;color:#dfe2ea}
+  .ans p{margin:.5em 0}
+  .ans b{color:#f0f1f6}
+  .ans ul{margin:.4em 0;padding-left:18px}
+  .ans li{margin:.28em 0}
+  .ans code{font-family:var(--mono);font-size:12.5px;background:rgba(255,255,255,.05);padding:1px 5px;border-radius:5px;color:#c6cbd8}
+  .cursor{display:inline-block;width:7px;height:15px;margin-left:2px;vertical-align:-2px;
+    background:var(--accent);border-radius:1px;animation:blink 1s steps(2) infinite;box-shadow:0 0 8px rgba(var(--acc),.7)}
+  .placeholder{color:var(--faint);font-size:14px;margin-top:40px;text-align:center;font-weight:300}
+  details{margin-top:16px;border-top:1px solid var(--line);padding-top:10px}
+  summary{cursor:pointer;color:var(--dim);font-size:12px;letter-spacing:.3px;font-family:var(--mono)}
+  .cite{font-size:12px;color:#9aa1b2;margin:8px 0;line-height:1.5}
+  .cite .t{font-family:var(--mono);color:#8f7fd0;font-size:11px}
+
+  /* side tabs */
+  .tabs{display:flex;gap:4px;margin-bottom:12px}
+  .tab{font-size:12px;color:#7a8090;background:transparent;border:none;cursor:pointer;padding:6px 10px;
+    border-radius:8px;font-family:var(--sans);transition:color .2s,background .2s}
+  .tab.active{color:#c9b8f5;background:rgba(var(--acc),.10)}
+  .side-body{min-height:300px}
+  #graphFrame{width:100%;height:340px;border:none;border-radius:10px;background:transparent}
+  .splade-row{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px}
+  .splade-term{width:110px;color:#c6cbd8;font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .splade-bar{flex:1;height:6px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden}
+  .splade-fill{height:100%;background:linear-gradient(90deg,rgba(var(--acc),.9),rgba(var(--acc),.4));border-radius:3px}
+  .side-hint{color:var(--faint);font-size:12px;margin-top:40px;text-align:center;font-weight:300}
+
+  footer{color:var(--faint);font-size:11px;margin-top:26px;text-align:center;font-family:var(--mono)}
+
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+  @keyframes blink{0%{opacity:1}50%{opacity:0}100%{opacity:1}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+<canvas id="bg"></canvas>
+
+<div class="wrap">
+  <div class="hero">
+    <h1 class="wordmark">SPARDA</h1>
+    <p class="sub">A query router over two retrieval engines — <b>DANTE</b> multi-signal hybrid product
+      search &amp; <b>VERGIL</b> GraphRAG knowledge graph. Grounded, cited answers over the
+      <b>Amazon&nbsp;ESCI</b> catalog (~352K products), ranked by relevance — not reviews or sales, so
+      "best"-style queries surface the closest matches, not curated picks.</p>
+  </div>
+
+  <div class="cmd">
+    <input id="q" type="text" autocomplete="off" spellcheck="false"
+      placeholder="Ask about products…  e.g. wireless noise cancelling headphones under $300" />
+    <button id="go">Search</button>
+  </div>
+  <div class="hint">⏎ to search · routed automatically to DANTE or VERGIL · first query warms the model (~60–90s)</div>
+
+  <div class="chips" id="chips"></div>
+
+  <div class="grid">
+    <div class="panel answer" id="answerPanel">
+      <div class="placeholder" id="ph">Ask something to begin — the answer streams in with its route and citations.</div>
+      <div id="answer" style="display:none">
+        <div><span class="badge" id="badge"></span><span class="meta" id="meta"></span></div>
+        <div class="ans" id="ansText"></div>
+        <div id="citeWrap"></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <div class="tabs">
+        <button class="tab active" data-tab="graph">Knowledge graph</button>
+        <button class="tab" data-tab="splade">SPLADE expansion</button>
+      </div>
+      <div class="side-body">
+        <div id="graphPane"><div class="side-hint">The relevant knowledge-graph subgraph appears here after a search.</div></div>
+        <div id="spladePane" style="display:none"><div class="side-hint">SPLADE learned-sparse term expansion appears here after a search.</div></div>
+      </div>
+    </div>
+  </div>
+
+  <footer>DANTE · VERGIL · SPARDA — self-hosted retrieval demo</footer>
+</div>
+
+<script>
+// ---- API base: same-origin when served from Modal; set window.SPARDA_API for a CDN (Vercel) host ----
+var API = (location.hostname.indexOf("modal.run") >= 0) ? "" : (window.SPARDA_API || "");
+
+// ---- constellation particle background ----
+(function(){
+  var reduce = matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var cv=document.getElementById("bg"), ctx=cv.getContext("2d"),
+      dpr=Math.min(devicePixelRatio||1,2), W,H,P=[],m={x:-9999,y:-9999},LINK,MR;
+  function resize(){
+    W=cv.width=Math.floor(innerWidth*dpr); H=cv.height=Math.floor(innerHeight*dpr);
+    cv.style.width=innerWidth+"px"; cv.style.height=innerHeight+"px";
+    LINK=130*dpr; MR=170*dpr;
+    var n=Math.max(28,Math.min(90,Math.floor(innerWidth*innerHeight/16000)));
+    P=[]; for(var i=0;i<n;i++)P.push({x:Math.random()*W,y:Math.random()*H,
+      vx:(Math.random()-.5)*.28*dpr,vy:(Math.random()-.5)*.28*dpr});
+  }
+  function frame(){
+    ctx.clearRect(0,0,W,H); var i,j,p;
+    for(i=0;i<P.length;i++){p=P[i];p.x+=p.vx;p.y+=p.vy;
+      if(p.x<0)p.x+=W;if(p.x>W)p.x-=W;if(p.y<0)p.y+=H;if(p.y>H)p.y-=H;
+      if(m.x>-9999){var dx=p.x-m.x,dy=p.y-m.y,d2=dx*dx+dy*dy;
+        if(d2<MR*MR&&d2>1){var d=Math.sqrt(d2),f=(MR-d)/MR*.7;p.x+=dx/d*f;p.y+=dy/d*f;}}
+      ctx.beginPath();ctx.arc(p.x,p.y,1.4*dpr,0,6.283);ctx.fillStyle="rgba(139,92,246,.5)";ctx.fill();}
+    for(i=0;i<P.length;i++){for(j=i+1;j<P.length;j++){var a=P[i],b=P[j],ex=a.x-b.x,ey=a.y-b.y,e2=ex*ex+ey*ey;
+      if(e2<LINK*LINK){ctx.strokeStyle="rgba(139,92,246,"+(1-Math.sqrt(e2)/LINK)*.16+")";ctx.lineWidth=1;
+        ctx.beginPath();ctx.moveTo(a.x,a.y);ctx.lineTo(b.x,b.y);ctx.stroke();}}
+      if(m.x>-9999){var mx=P[i].x-m.x,my=P[i].y-m.y,m2=mx*mx+my*my;
+        if(m2<MR*MR){ctx.strokeStyle="rgba(139,92,246,"+(1-Math.sqrt(m2)/MR)*.34+")";ctx.lineWidth=1;
+          ctx.beginPath();ctx.moveTo(P[i].x,P[i].y);ctx.lineTo(m.x,m.y);ctx.stroke();}}}
+  }
+  var run=true; function loop(){if(run)frame();requestAnimationFrame(loop);}
+  addEventListener("resize",resize);
+  addEventListener("mousemove",function(e){m.x=e.clientX*dpr;m.y=e.clientY*dpr;});
+  addEventListener("mouseout",function(){m.x=m.y=-9999;});
+  document.addEventListener("visibilitychange",function(){run=!document.hidden;});
+  resize(); if(reduce)frame(); else loop();
+})();
+
+// ---- tiny markdown → HTML (bold, bullets, paragraphs, inline code) ----
+function esc(s){return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");}
+function md(t){
+  t=esc(t);
+  t=t.replace(/`([^`]+)`/g,"<code>$1</code>");
+  t=t.replace(/\*\*([^*]+)\*\*/g,"<b>$1</b>");
+  var lines=t.split(/\n/),out=[],inUl=false;
+  for(var i=0;i<lines.length;i++){var L=lines[i];
+    if(/^\s*[-*]\s+/.test(L)){ if(!inUl){out.push("<ul>");inUl=true;} out.push("<li>"+L.replace(/^\s*[-*]\s+/,"")+"</li>"); }
+    else { if(inUl){out.push("</ul>");inUl=false;} if(L.trim()==="")out.push("");else out.push("<p>"+L+"</p>"); }
+  }
+  if(inUl)out.push("</ul>");
+  return out.join("\n");
+}
+
+var EXAMPLES=[
+  ["NC headphones < $300","wireless noise cancelling headphones under $300"],
+  ["Sony WH-1000XM5 accessories","What accessories from Sony work with the WH-1000XM5?"],
+  ["Alexa vs Google Home","Compare the smart home ecosystems — Alexa vs Google Home"],
+  ["Anker chargers + MacBook","USB-C chargers from Anker that people buy with MacBooks"],
+  ["wireless earbud trends","What are the trends in wireless earbuds?"],
+  ["JBL Flip alternative","Find a portable speaker similar to JBL Flip but a different brand"]
+];
+var qEl=document.getElementById("q"), goEl=document.getElementById("go"),
+    LABELS={local:"DANTE search",global:"VERGIL communities",multi_hop:"VERGIL graph"};
+(function(){var c=document.getElementById("chips");EXAMPLES.forEach(function(e){
+  var b=document.createElement("button");b.className="chip";b.textContent=e[0];
+  b.onclick=function(){qEl.value=e[1];qEl.focus();};c.appendChild(b);});})();
+
+var busy=false;
+function setBusy(b){busy=b;goEl.disabled=b;goEl.textContent=b?"…":"Search";}
+
+async function run(){
+  var query=qEl.value.trim(); if(!query||busy)return;
+  setBusy(true);
+  document.getElementById("ph").style.display="none";
+  var ansBox=document.getElementById("answer"); ansBox.style.display="block";
+  var badge=document.getElementById("badge"), meta=document.getElementById("meta"),
+      ansText=document.getElementById("ansText"), citeWrap=document.getElementById("citeWrap");
+  badge.textContent=""; meta.textContent=""; citeWrap.innerHTML="";
+  ansText.innerHTML='<span style="color:var(--faint)">routing + retrieving…</span><span class="cursor"></span>';
+
+  // side panels
+  loadGraph(query); loadSplade(query);
+
+  try{
+    var res=await fetch(API+"/api/query",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({query:query})});
+    if(!res.ok||!res.body){throw new Error("http "+res.status);}
+    var reader=res.body.getReader(), dec=new TextDecoder(), buf="";
+    while(true){
+      var r=await reader.read(); if(r.done)break;
+      buf+=dec.decode(r.value,{stream:true});
+      var parts=buf.split("\n\n"); buf=parts.pop();
+      for(var k=0;k<parts.length;k++){
+        var ev=parts[k], type=(ev.match(/event: ?(.*)/)||[])[1], data=(ev.match(/data: ?([\s\S]*)/)||[])[1];
+        if(!data)continue; var d; try{d=JSON.parse(data);}catch(_){continue;}
+        if(type==="meta"){badge.textContent=LABELS[d.route]||d.route; meta.textContent=(d.method||"")+" · conf "+(d.confidence);}
+        else if(type==="token"){ansText.innerHTML=md(d.text)+'<span class="cursor"></span>';}
+        else if(type==="cite"){renderCites(citeWrap,d.citations);}
+        else if(type==="error"){ansText.innerHTML='<span style="color:#e0778a">'+esc(d.message||"error")+'</span>';}
+      }
+    }
+    ansText.innerHTML=ansText.innerHTML.replace(/<span class="cursor"><\/span>/,""); // drop cursor
+  }catch(e){ansText.innerHTML='<span style="color:#e0778a">Request failed: '+esc(String(e))+'. The model may be cold-starting — try again in a moment.</span>';}
+  setBusy(false);
+}
+function renderCites(wrap,cites){
+  if(!cites||!cites.length){return;}
+  var h='<details open><summary>citations ('+cites.length+')</summary>';
+  cites.forEach(function(c){h+='<div class="cite"><span class="t">'+esc(c.type)+'</span> '+esc(c.name)+' — '+esc(c.evidence)+'</div>';});
+  h+='</details>'; wrap.innerHTML=h;
+}
+async function loadGraph(q){
+  var pane=document.getElementById("graphPane");
+  pane.innerHTML='<div class="side-hint">building subgraph…</div>';
+  try{var r=await fetch(API+"/api/graph?q="+encodeURIComponent(q)); var html=await r.text();
+    if(html&&html.indexOf("No matching")<0){pane.innerHTML='<iframe id="graphFrame" sandbox="allow-scripts allow-same-origin"></iframe>';
+      document.getElementById("graphFrame").srcdoc=html;}
+    else pane.innerHTML='<div class="side-hint">No matching graph nodes for this query.</div>';
+  }catch(e){pane.innerHTML='<div class="side-hint">graph unavailable</div>';}
+}
+async function loadSplade(q){
+  var pane=document.getElementById("spladePane");
+  pane.innerHTML='<div class="side-hint">expanding…</div>';
+  try{var r=await fetch(API+"/api/splade?q="+encodeURIComponent(q)); var d=await r.json();
+    var terms=Object.keys(d); if(!terms.length){pane.innerHTML='<div class="side-hint">no expansion</div>';return;}
+    var max=Math.max.apply(null,terms.map(function(t){return d[t];}))||1, h="";
+    terms.forEach(function(t){h+='<div class="splade-row"><span class="splade-term">'+esc(t)+'</span>'+
+      '<span class="splade-bar"><span class="splade-fill" style="width:'+(d[t]/max*100)+'%"></span></span></div>';});
+    pane.innerHTML=h;
+  }catch(e){pane.innerHTML='<div class="side-hint">splade unavailable</div>';}
+}
+// tab switching
+document.querySelectorAll(".tab").forEach(function(t){t.onclick=function(){
+  document.querySelectorAll(".tab").forEach(function(x){x.classList.remove("active");}); t.classList.add("active");
+  var g=t.dataset.tab==="graph"; document.getElementById("graphPane").style.display=g?"block":"none";
+  document.getElementById("spladePane").style.display=g?"none":"block";
+};});
+
+goEl.onclick=run;
+qEl.addEventListener("keydown",function(e){if(e.key==="Enter")run();});
+qEl.focus();
+</script>
+</body>
+</html>
