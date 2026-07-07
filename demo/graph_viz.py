@@ -19,8 +19,45 @@ NODE_COLORS = {   # monochrome + violet, matching the UI-v2 palette (demo/app.py
 }
 
 
+def subgraph_data(pipeline, query: str, max_nodes: int = 46) -> dict:
+    """Return the relevant subgraph as JSON-able {nodes, edges} for the custom neuron canvas
+    renderer (the frontend draws it — this just selects + serializes). Same selection as
+    ``render_subgraph``: fuzzy entity-link → seeds → 1-hop BFS."""
+    from rapidfuzz import fuzz
+
+    entities = pipeline._extract_entities(query)
+    G = pipeline.graph
+
+    seeds = []
+    for entity in entities:
+        for n, d in G.nodes(data=True):
+            if fuzz.partial_ratio(str(entity).lower(), str(d.get("name", "")).lower()) > 70:
+                seeds.append(n)
+                break
+
+    relevant = set(seeds)
+    for seed in seeds:
+        for nb in list(G.neighbors(seed))[:10]:
+            relevant.add(nb)
+    if not relevant:
+        return {"nodes": [], "edges": []}
+
+    sub = G.subgraph(list(relevant)[:max_nodes])
+    seedset = set(seeds)
+    nodes = [{
+        "id": str(n),
+        "label": (str(d.get("name", n)) or str(n))[:34],
+        "type": d.get("type", "product"),
+        "deg": int(sub.degree(n)),
+        "seed": n in seedset,
+    } for n, d in sub.nodes(data=True)]
+    edges = [{"s": str(u), "t": str(v), "type": d.get("type", "")}
+             for u, v, d in sub.edges(data=True)]
+    return {"nodes": nodes, "edges": edges}
+
+
 def render_subgraph(pipeline, query: str, max_nodes: int = 40) -> str:
-    """Build a pyvis visualization of the relevant subgraph."""
+    """Build a pyvis visualization of the relevant subgraph (legacy HTML fallback)."""
     from pyvis.network import Network
 
     entities = pipeline._extract_entities(query)

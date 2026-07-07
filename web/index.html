@@ -89,7 +89,14 @@
     border-radius:8px;font-family:var(--sans);transition:color .2s,background .2s}
   .tab.active{color:#c9b8f5;background:rgba(var(--acc),.10)}
   .side-body{min-height:300px}
-  #graphFrame{width:100%;height:340px;border:none;border-radius:10px;background:transparent}
+  #graphPane{position:relative}
+  #graphCanvas{width:100%;height:340px;display:block;cursor:grab;border-radius:10px}
+  #graphCanvas:active{cursor:grabbing}
+  .graph-tip{position:absolute;pointer-events:none;background:rgba(12,14,20,.94);
+    border:1px solid rgba(139,92,246,.45);color:#e8eaf0;font-size:11px;font-family:var(--mono);
+    padding:4px 8px;border-radius:6px;opacity:0;transition:opacity .12s;
+    transform:translate(-50%,-150%);white-space:nowrap;z-index:5;max-width:220px;overflow:hidden;text-overflow:ellipsis}
+  .graph-tip .tt{color:#9a86e0}
   .splade-row{display:flex;align-items:center;gap:8px;margin:5px 0;font-size:12px}
   .splade-term{width:110px;color:#c6cbd8;font-family:var(--mono);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .splade-bar{flex:1;height:6px;background:rgba(255,255,255,.05);border-radius:3px;overflow:hidden}
@@ -261,14 +268,107 @@ function renderCites(wrap,cites){
   cites.forEach(function(c){h+='<div class="cite"><span class="t">'+esc(c.type)+'</span> '+esc(c.name)+' — '+esc(c.evidence)+'</div>';});
   h+='</details>'; wrap.innerHTML=h;
 }
+var _graphStop=null;
 async function loadGraph(q){
   var pane=document.getElementById("graphPane");
-  pane.innerHTML='<div class="side-hint">building subgraph…</div>';
-  try{var r=await fetch(API+"/api/graph?q="+encodeURIComponent(q)); var html=await r.text();
-    if(html&&html.indexOf("No matching")<0){pane.innerHTML='<iframe id="graphFrame" sandbox="allow-scripts allow-same-origin"></iframe>';
-      document.getElementById("graphFrame").srcdoc=html;}
-    else pane.innerHTML='<div class="side-hint">No matching graph nodes for this query.</div>';
+  if(_graphStop){_graphStop();_graphStop=null;}
+  pane.innerHTML='<div class="side-hint">building neural map…</div>';
+  try{
+    var r=await fetch(API+"/api/graph?q="+encodeURIComponent(q)); var data=await r.json();
+    if(!data.nodes||!data.nodes.length){pane.innerHTML='<div class="side-hint">No matching graph nodes for this query.</div>';return;}
+    pane.innerHTML='<canvas id="graphCanvas"></canvas><div class="graph-tip" id="graphTip"></div>';
+    _graphStop=renderNeuronGraph(document.getElementById("graphCanvas"),document.getElementById("graphTip"),data);
   }catch(e){pane.innerHTML='<div class="side-hint">graph unavailable</div>';}
+}
+
+// ---- live "neural network" graph: glowing neuron nodes, firing synapses, hover/drag ----
+var TYPE_COL={product:[176,140,255],brand:[150,110,240],category:[135,142,160],feature:[112,118,132]};
+function renderNeuronGraph(cv,tip,data){
+  var ctx=cv.getContext("2d"),dpr=Math.min(devicePixelRatio||1,2),Wc=0,Hc=0;
+  function size(){var rect=cv.getBoundingClientRect();Wc=rect.width||cv.clientWidth||400;Hc=340;
+    cv.width=Math.floor(Wc*dpr);cv.height=Math.floor(Hc*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);}
+  size();
+  var byId={},nodes=data.nodes.map(function(n){
+    var seed=!!n.seed, base=(n.type==="product"||seed)?8:(n.type==="brand"?6.5:5);
+    var o={id:n.id,label:n.label,type:n.type,seed:seed,
+      r:base+Math.min(4,(n.deg||0)*0.5),
+      x:Wc/2+(Math.random()-.5)*Wc*0.5,y:Hc/2+(Math.random()-.5)*Hc*0.5,
+      vx:0,vy:0,ph:Math.random()*6.28,fx:null,fy:null};
+    byId[n.id]=o;return o;});
+  var edges=[];data.edges.forEach(function(e){var a=byId[e.s],b=byId[e.t];if(a&&b)edges.push({a:a,b:b});});
+  var adj={};nodes.forEach(function(n){adj[n.id]=[];});
+  edges.forEach(function(e){adj[e.a.id].push(e.b.id);adj[e.b.id].push(e.a.id);});
+  var signals=[];               // {a,b,prog,speed}
+  function fire(n){for(var i=0;i<edges.length;i++){var e=edges[i];
+    if(e.a===n||e.b===n){var from=e.a===n?e.a:e.b,to=e.a===n?e.b:e.a;
+      if(signals.length<60)signals.push({a:from,b:to,prog:0,speed:0.018+Math.random()*0.02});}}}
+  var hover=null,drag=null,t0=performance.now(),raf=null,lastFire=0;
+
+  function ptr(e){var rect=cv.getBoundingClientRect();return{x:e.clientX-rect.left,y:e.clientY-rect.top};}
+  function pick(p){var best=null,bd=1e9;for(var i=0;i<nodes.length;i++){var n=nodes[i],dx=n.x-p.x,dy=n.y-p.y,d=Math.sqrt(dx*dx+dy*dy);if(d<n.r+6&&d<bd){bd=d;best=n;}}return best;}
+  function onMove(e){var p=ptr(e);
+    if(drag){drag.fx=p.x;drag.fy=p.y;return;}
+    var h=pick(p);
+    if(h!==hover){hover=h;if(h)fire(h);}
+    if(h){tip.style.left=p.x+"px";tip.style.top=p.y+"px";
+      tip.innerHTML='<span class="tt">'+h.type+'</span> '+h.label;tip.style.opacity=1;}
+    else tip.style.opacity=0;}
+  function onDown(e){var p=ptr(e),h=pick(p);if(h){drag=h;h.fx=p.x;h.fy=p.y;}}
+  function onUp(){if(drag){drag.fx=drag.fy=null;drag=null;}}
+  function onLeave(){hover=null;tip.style.opacity=0;if(drag){drag.fx=drag.fy=null;drag=null;}}
+  cv.addEventListener("mousemove",onMove);cv.addEventListener("mousedown",onDown);
+  window.addEventListener("mouseup",onUp);cv.addEventListener("mouseleave",onLeave);
+  var ro=null;try{ro=new ResizeObserver(function(){size();});ro.observe(cv);}catch(_){}
+
+  function physics(){
+    for(var i=0;i<nodes.length;i++){var a=nodes[i];
+      for(var j=i+1;j<nodes.length;j++){var b=nodes[j],dx=a.x-b.x,dy=a.y-b.y,d2=dx*dx+dy*dy||1,d=Math.sqrt(d2);
+        var f=900/d2;var ux=dx/d,uy=dy/d;a.vx+=ux*f;a.vy+=uy*f;b.vx-=ux*f;b.vy-=uy*f;}}
+    for(var k=0;k<edges.length;k++){var e=edges[k],dx=e.b.x-e.a.x,dy=e.b.y-e.a.y,d=Math.sqrt(dx*dx+dy*dy)||1;
+      var f=(d-78)*0.02,ux=dx/d,uy=dy/d;e.a.vx+=ux*f;e.a.vy+=uy*f;e.b.vx-=ux*f;e.b.vy-=uy*f;}
+    for(var m=0;m<nodes.length;m++){var n=nodes[m];
+      n.vx+=(Wc/2-n.x)*0.002;n.vy+=(Hc/2-n.y)*0.002;n.vx*=0.86;n.vy*=0.86;
+      if(n.fx!=null){n.x=n.fx;n.y=n.fy;n.vx=n.vy=0;}else{n.x+=n.vx;n.y+=n.vy;}
+      n.x=Math.max(n.r+3,Math.min(Wc-n.r-3,n.x));n.y=Math.max(n.r+3,Math.min(Hc-n.r-3,n.y));}
+  }
+  function draw(now){
+    var t=(now-t0)/1000;physics();ctx.clearRect(0,0,Wc,Hc);
+    var hset={};if(hover){hset[hover.id]=1;adj[hover.id].forEach(function(id){hset[id]=1;});}
+    // edges
+    for(var k=0;k<edges.length;k++){var e=edges[k];
+      var on=hover&&(hset[e.a.id]&&hset[e.b.id]);
+      ctx.strokeStyle=on?"rgba(176,140,255,.5)":"rgba(139,92,246,"+(hover?".07":".16")+")";
+      ctx.lineWidth=on?1.6:1;ctx.beginPath();ctx.moveTo(e.a.x,e.a.y);ctx.lineTo(e.b.x,e.b.y);ctx.stroke();}
+    // firing signals
+    for(var s=signals.length-1;s>=0;s--){var sg=signals[s];sg.prog+=sg.speed;
+      if(sg.prog>=1){signals.splice(s,1);continue;}
+      var x=sg.a.x+(sg.b.x-sg.a.x)*sg.prog,y=sg.a.y+(sg.b.y-sg.a.y)*sg.prog;
+      var g=ctx.createRadialGradient(x,y,0,x,y,6);g.addColorStop(0,"rgba(210,190,255,.95)");g.addColorStop(1,"rgba(139,92,246,0)");
+      ctx.fillStyle=g;ctx.beginPath();ctx.arc(x,y,6,0,6.283);ctx.fill();}
+    // nodes
+    for(var i=0;i<nodes.length;i++){var n=nodes[i],col=TYPE_COL[n.type]||[150,150,160];
+      var dim=hover&&!hset[n.id],a=dim?0.25:1;
+      var pr=n.r*(1+0.09*Math.sin(t*2+n.ph))*((hover&&hset[n.id])?1.25:1);
+      var gr=ctx.createRadialGradient(n.x,n.y,0,n.x,n.y,pr*3.2);
+      gr.addColorStop(0,"rgba("+col[0]+","+col[1]+","+col[2]+","+(0.5*a)+")");
+      gr.addColorStop(1,"rgba("+col[0]+","+col[1]+","+col[2]+",0)");
+      ctx.fillStyle=gr;ctx.beginPath();ctx.arc(n.x,n.y,pr*3.2,0,6.283);ctx.fill();
+      ctx.fillStyle="rgba("+col[0]+","+col[1]+","+col[2]+","+a+")";
+      ctx.beginPath();ctx.arc(n.x,n.y,pr,0,6.283);ctx.fill();
+      if(n.seed){ctx.strokeStyle="rgba(230,220,255,"+a+")";ctx.lineWidth=1.4;ctx.beginPath();ctx.arc(n.x,n.y,pr+2.5,0,6.283);ctx.stroke();}
+      if((n.seed||hset[n.id])&&!dim){ctx.fillStyle="rgba(232,234,240,"+(a*0.9)+")";
+        ctx.font="10px ui-monospace,Menlo,monospace";ctx.textAlign="center";
+        ctx.fillText(n.label.length>18?n.label.slice(0,17)+"…":n.label,n.x,n.y-pr-6);}}
+    // ambient firing
+    if(now-lastFire>500+Math.random()*500){lastFire=now;
+      if(edges.length&&signals.length<50){var e=edges[(Math.random()*edges.length)|0];
+        signals.push({a:Math.random()<.5?e.a:e.b,b:Math.random()<.5?e.b:e.a,prog:0,speed:0.016+Math.random()*0.02});}}
+    raf=requestAnimationFrame(draw);
+  }
+  raf=requestAnimationFrame(draw);
+  return function stop(){if(raf)cancelAnimationFrame(raf);
+    cv.removeEventListener("mousemove",onMove);cv.removeEventListener("mousedown",onDown);
+    window.removeEventListener("mouseup",onUp);cv.removeEventListener("mouseleave",onLeave);if(ro)ro.disconnect();};
 }
 async function loadSplade(q){
   var pane=document.getElementById("spladePane");

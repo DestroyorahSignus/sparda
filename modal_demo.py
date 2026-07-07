@@ -102,7 +102,7 @@ def web():
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 
-    from demo.graph_viz import render_subgraph
+    from demo.graph_viz import subgraph_data
     from sparda_runtime import build_pipeline
 
     _cache: dict = {}
@@ -164,11 +164,11 @@ def web():
     @api.get("/api/graph")
     def graph(q: str = ""):
         if not q.strip():
-            return HTMLResponse("")
+            return JSONResponse({"nodes": [], "edges": []})
         try:
-            return HTMLResponse(render_subgraph(get_pipeline(), q))
+            return JSONResponse(subgraph_data(get_pipeline(), q))
         except Exception:
-            return HTMLResponse("")
+            return JSONResponse({"nodes": [], "edges": []})
 
     @api.get("/api/splade")
     def splade(q: str = ""):
