@@ -28,7 +28,9 @@ def create_demo(pipeline: "SpardaPipeline"):
                           for c in result["citations"][:6])
         formatted = (f"**{badge}**  {why}\n\n{answer}\n\n"
                      f"<details><summary>citations</summary>\n\n{cites}\n</details>")
-        history.append((query, formatted))
+        # Gradio 5 Chatbot uses type="messages" → append role/content dicts, not (q,a) tuples.
+        history = history + [{"role": "user", "content": query},
+                             {"role": "assistant", "content": formatted}]
         return "", history
 
     def show_graph(query):
@@ -46,7 +48,7 @@ def create_demo(pipeline: "SpardaPipeline"):
 
         with gr.Row():
             with gr.Column(scale=3):
-                chatbot = gr.Chatbot(height=450, label="Chat")
+                chatbot = gr.Chatbot(height=450, label="Chat", type="messages")
                 query = gr.Textbox(placeholder="Try: 'What accessories from Sony work with the WH-1000XM5?'",
                                    label="Query")
                 with gr.Row():
