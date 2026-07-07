@@ -139,7 +139,10 @@ def build_dante(dante_artifacts: str = "/dante-artifacts"):
 # bi-encoder here would be a dimension mismatch. DANTE's bi-encoder stays the dense
 # retrieval leg INSIDE DanteSearchEngine; this encoder only serves community search.
 VERGIL_ENCODER_NAME = "BAAI/bge-small-en-v1.5"
-QWEN_MODEL = "Qwen/Qwen3-4B-Instruct-2507"  # shared generator (Apache-2.0, non-thinking)
+QWEN_MODEL = "Qwen/Qwen3-30B-A3B-Instruct-2507"  # SPARDA generator: MoE 30B-total/3B-active
+# (Apache-2.0, non-thinking). Big-model answer quality at ~3B-active inference speed; ~60GB
+# bf16 fits the A100-80GB. Pre-cached into the sparda-artifacts volume by fetch_model.py
+# (the demo mounts volumes READ-ONLY, so it can't download at serve time).
 
 
 def build_pipeline(
