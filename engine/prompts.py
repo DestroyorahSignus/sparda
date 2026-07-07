@@ -16,6 +16,11 @@ _GROUNDING = """RULES (follow strictly):
   price, rating, or availability that is not explicitly written in the items below.
 - Recommend ONLY products that appear in the list, and refer to each by the exact name shown
   (you may cite it as "#N"). Never name a product that is not in the list.
+- Do NOT mention or compare against any product that is not in the list — not even as a
+  reference point, example, or "vs." comparison. If you would compare to an outside product,
+  omit that comparison entirely.
+- Only state a specification/feature if it is written in that item's text below; do not add
+  numbers (zoom, battery, etc.) from memory.
 - If the listed items do not actually answer the question, say so plainly and describe the
   closest options that ARE listed — do not fabricate a better-fitting product."""
 
