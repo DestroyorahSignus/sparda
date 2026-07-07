@@ -11,11 +11,11 @@ from __future__ import annotations
 
 import tempfile
 
-NODE_COLORS = {
-    "product": "#2a78d6",
-    "brand": "#1baf7a",
-    "category": "#eda100",
-    "feature": "#4a3aa7",
+NODE_COLORS = {   # match the dark UI accent palette (demo/app.py)
+    "product": "#4d8ff0",   # steel
+    "brand": "#35c58e",     # green
+    "category": "#eda100",  # amber
+    "feature": "#9d6be0",   # violet
 }
 
 
@@ -57,7 +57,7 @@ def render_subgraph(pipeline, query: str, max_nodes: int = 40) -> str:
         net.add_node(n, label=label, color=color, title=f"{ntype}: {d.get('name', n)}")
 
     for u, v, d in subgraph.edges(data=True):
-        net.add_edge(u, v, title=d.get("type", ""), color="#666")
+        net.add_edge(u, v, title=d.get("type", ""), color="#4a5163")
 
     with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w") as f:
         net.save_graph(f.name)

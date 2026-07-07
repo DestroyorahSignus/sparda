@@ -95,7 +95,10 @@ class SpardaPipeline:
         cache_key = (query.strip().lower(), decision.route)
         if cache_key in self._cache:
             return self._cache[cache_key]
-        result = self._pack(decision, self.llm.generate(prompt, max_tokens=600), citations, context)
+        # temperature=0.0: deterministic + maximally faithful to the grounded prompt (curbs
+        # the gap-filling that invented the "S20 FE").
+        result = self._pack(decision, self.llm.generate(prompt, max_tokens=600, temperature=0.0),
+                            citations, context)
         self._cache[cache_key] = result
         return result
 
@@ -109,22 +112,10 @@ class SpardaPipeline:
             yield r["answer"], decision, r["citations"], r["context"]
             return
         acc = ""
-        for chunk in self.llm.generate_stream(prompt, max_tokens=600):
+        for chunk in self.llm.generate_stream(prompt, max_tokens=600, temperature=0.0):
             acc += chunk
             yield acc, decision, citations, context
         self._cache[cache_key] = self._pack(decision, acc, citations, context)
-
-    def _run_local(self, query, decision):
-        context = local_search(query, self.dante, self.graph, self.dante.product_db)
-        prompt = LOCAL_PROMPT.format(
-            dante_results=self._fmt_products(context["dante_results"]),
-            graph_context=self._fmt_graph(context["graph_context"]), query=query)
-        return {
-            "answer": self.llm.generate(prompt, max_tokens=600),
-            "route": "local", "routing": decision.__dict__,
-            "citations": self._cite_products(context["dante_results"]),
-            "join_rate": self.coverage.join_rate, "context": context,
-        }
 
     # ── citation builders (uniform {type, id, name, evidence}) ──
     def _cite_products(self, results):
@@ -201,7 +192,7 @@ class SpardaPipeline:
             inner = r.get("product") if isinstance(r.get("product"), dict) else {}
             text = (r.get("name") or inner.get("name")
                     or r.get("product_text") or inner.get("product_text") or "?")
-            lines.append(f"{i}. {str(text)[:200]}")
+            lines.append(f"{i}. {str(text)[:320]}")  # 320: enough concrete detail to anchor on
         return "\n".join(lines)
 
     def _fmt_graph(self, graph_ctx):
