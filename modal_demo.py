@@ -58,10 +58,11 @@ image = (
                                        # the web container crash-loops on boot: ImportError)
         "numpy==2.2.6",
         "fastapi>=0.110",              # ASGI host for gradio.mount_gradio_app
-        "gradio==6.19.0",             # PINNED: unpinned >=4.0.0 drifted (6.17→6.19 across
-                                      # builds). Gradio 6 is messages-format-only (no Chatbot
-                                      # type= kwarg) AND is the only line that coexists with
-                                      # pandas 3.0.3 (gradio 5 pins older pandas → conflict).
+        "gradio>=6.0,<6.19",          # BOUNDED: gradio 6 (messages-format-only, no Chatbot
+                                      # type=) coexists with pandas 3.0.3; but 6.19 conflicts
+                                      # with transformers 4.57.6/accelerate — cap below it so
+                                      # pip resolves to the compatible 6.17/6.18. (gradio 5
+                                      # pins older pandas → conflict, so 6.x is the only lane.)
         "pyvis>=0.3.2",
     )
     .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false"})
