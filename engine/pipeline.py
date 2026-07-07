@@ -115,9 +115,11 @@ class SpardaPipeline:
     def _cite_products(self, results):
         cites = []
         for r in results[:10]:
-            p = r.get("product", r)
+            p = r.get("product") if isinstance(r.get("product"), dict) else r
+            name = (p.get("name") or p.get("product_text")
+                    or r.get("product_text") or "?")
             cites.append({"type": "product", "id": p.get("product_id", ""),
-                          "name": p.get("name", "?"), "evidence": "retrieved/reranked"})
+                          "name": str(name)[:120], "evidence": "retrieved/reranked"})
         return cites
 
     def _cite_graph(self, graph_ctx):
@@ -176,11 +178,15 @@ class SpardaPipeline:
         return out[:10] or [w for w in query.split() if len(w) > 3]
 
     def _fmt_products(self, results):
-        # format top 10 products as numbered list
+        # format top 10 products as a numbered list. DANTE's ESCI catalog has NO "name"
+        # field — only product_id + product_text — so fall back to product_text (truncated),
+        # else the LLM sees "1. ? 2. ?" and reports "no products in the results".
         lines = []
         for i, r in enumerate(results[:10], 1):
-            name = r.get("name") or r.get("product", {}).get("name", "?")
-            lines.append(f"{i}. {name}")
+            inner = r.get("product") if isinstance(r.get("product"), dict) else {}
+            text = (r.get("name") or inner.get("name")
+                    or r.get("product_text") or inner.get("product_text") or "?")
+            lines.append(f"{i}. {str(text)[:200]}")
         return "\n".join(lines)
 
     def _fmt_graph(self, graph_ctx):
