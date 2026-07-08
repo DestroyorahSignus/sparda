@@ -13,7 +13,7 @@ Deploy:  (clone dante + vergil as siblings ../dante-src ../vergil-src first)
 
 The pipeline (DanteSearchEngine + VERGIL graph + one shared Qwen3-30B-A3B) is LAZY-loaded on
 the first /api/query, NOT at container start — so the page itself serves fast; only the first
-query pays the model cold-load. ``scaledown_window=1200`` keeps the warm model resident for
+query pays the model cold-load. ``scaledown_window=120`` releases the A100 after 2 min idle (portfolio demo
 20 min of idle. The frontend is also Vercel-deployable as-is (static): host web/ on a CDN and
 set ``window.SPARDA_API`` to this Modal URL (CORS is open). Image/vendoring/read-only volumes
 match ``modal_run.py``.
@@ -84,7 +84,7 @@ VOLUMES = {
 }
 
 
-@app.function(image=image, volumes=VOLUMES, gpu="A100-80GB", scaledown_window=1200,
+@app.function(image=image, volumes=VOLUMES, gpu="A100-80GB", scaledown_window=120,
               timeout=60 * 60)
 @modal.concurrent(max_inputs=8)   # one warm model serves several requests concurrently
 @modal.asgi_app()
