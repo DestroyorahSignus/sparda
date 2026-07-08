@@ -27,20 +27,13 @@ def multi_hop_search(query: str, entities: list[str], G: "nx.Graph",
     3. Score discovered products with DANTE's ColBERT reranker
     4. Return with reasoning paths (graph citations — e.g. "A --[complement_of]--> B")
     """
-    # Step 1: Entity linking (fuzzy match)
-    from rapidfuzz import fuzz
+    # Step 1: Entity linking (fuzzy match via the per-graph cached name index — the old
+    # inline loop re-scanned every node in the ~65K-node graph per entity, per query)
+    from engine.graph_index import link_entity
     matched_nodes = []
     for entity in entities:
-        entity = str(entity).strip()          # defensive: never trust upstream shape
-        if not entity:
-            continue
-        best_match, best_score = None, 0
-        for node, data in G.nodes(data=True):
-            name = str(data.get("name", ""))
-            score = fuzz.partial_ratio(entity.lower(), name.lower())
-            if score > best_score and score > 70:
-                best_match, best_score = node, score
-        if best_match:
+        best_match = link_entity(G, str(entity))   # defensive: never trust upstream shape
+        if best_match is not None:
             matched_nodes.append(best_match)
 
     if not matched_nodes:
@@ -49,9 +42,10 @@ def multi_hop_search(query: str, entities: list[str], G: "nx.Graph",
 
     # Step 2: BFS traversal from matched nodes
     discovered = set()
+    matched_set = set(matched_nodes)
     for start in matched_nodes:
         for node, dist in nx.single_source_shortest_path_length(G, start, cutoff=max_hops).items():
-            if G.nodes.get(node, {}).get("type") == "product" and node not in [n for n in matched_nodes]:
+            if G.nodes.get(node, {}).get("type") == "product" and node not in matched_set:
                 discovered.add(node)
 
     # Step 3: Score discovered products with DANTE's ColBERT

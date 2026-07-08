@@ -20,7 +20,7 @@ against a slightly different DANTE surface than the shipped one):
     attribute (it calls the module-level ``colbert_rerank``) and its ``.splade`` is a
     ``SpladeEncoder`` with no ``visualize_expansion`` METHOD (that's a module function).
     ``engine/multi_hop_search.py`` calls ``dante.colbert.rerank(...)`` and
-    ``demo/app.py`` calls ``dante.splade.visualize_expansion(...)`` — the adapter exposes
+    the demo API (``modal_demo.py`` /api/splade) calls ``dante.splade.visualize_expansion(...)`` — the adapter exposes
     both, delegating everything else to the real engine. This keeps ``engine/`` and
     ``demo/`` untouched.
 """
@@ -59,7 +59,7 @@ class _ColbertShim:
 class _SpladeShim:
     """Wraps the real ``SpladeEncoder`` and adds a ``visualize_expansion`` METHOD.
 
-    ``demo/app.py`` calls ``dante.splade.visualize_expansion(query, top_k_terms=...)``;
+    the demo API (``modal_demo.py`` /api/splade) calls ``dante.splade.visualize_expansion(query, top_k_terms=...)``;
     on the shipped DANTE that is a module-level function, so this method forwards to it.
     All other attribute access delegates to the real encoder.
     """

@@ -1,39 +1,34 @@
-"""Pyvis interactive subgraph rendering for the SPARDA demo.
+"""Subgraph selection + JSON serialization for the SPARDA demo's neuron-graph canvas.
 
-See SPARDA_BUILD_PLAN.md §7.
+``subgraph_data`` powers ``GET /api/graph``: it picks the query-relevant slice of the
+VERGIL graph (fuzzy entity-link → seeds → 1-hop BFS) and returns plain ``{nodes, edges}``
+JSON — the frontend (web/index.html ``renderNeuronGraph``) does all the drawing. The demo
+is a presentation layer: a viz error must never take down answering (§9 Step 6), so
+callers wrap this in try/except (modal_demo.py does).
 
-The ``pyvis`` import is deferred into ``render_subgraph`` so this module parses/imports even
-when pyvis is not installed (scaffold sandbox / CI). The demo is a presentation layer — a viz
-error must never take down answering (§9 Step 6), so callers should wrap this in try/except.
+(The old pyvis ``render_subgraph`` HTML path was removed with the Gradio UI — the custom
+frontend renders the graph itself from this JSON.)
 """
 
 from __future__ import annotations
 
-import tempfile
-
-NODE_COLORS = {   # monochrome + violet, matching the UI-v2 palette (demo/app.py)
-    "product": "#8b5cf6",   # violet accent (the focal nodes)
-    "brand": "#a78bfa",     # light violet
-    "category": "#7a8090",  # grey
-    "feature": "#565c6b",   # dim grey
-}
-
 
 def subgraph_data(pipeline, query: str, max_nodes: int = 46) -> dict:
-    """Return the relevant subgraph as JSON-able {nodes, edges} for the custom neuron canvas
-    renderer (the frontend draws it — this just selects + serializes). Same selection as
-    ``render_subgraph``: fuzzy entity-link → seeds → 1-hop BFS."""
-    from rapidfuzz import fuzz
+    """Return the relevant subgraph as JSON-able {nodes, edges} for the custom neuron
+    canvas renderer (the frontend draws it — this just selects + serializes).
+    Selection: fuzzy entity-link (BEST match per entity via the shared cached name
+    index — the old inline loop took the FIRST >70 hit and re-scanned every node per
+    entity) → seeds → 1-hop BFS."""
+    from engine.graph_index import link_entity
 
     entities = pipeline._extract_entities(query)
     G = pipeline.graph
 
     seeds = []
     for entity in entities:
-        for n, d in G.nodes(data=True):
-            if fuzz.partial_ratio(str(entity).lower(), str(d.get("name", "")).lower()) > 70:
-                seeds.append(n)
-                break
+        node = link_entity(G, str(entity))
+        if node is not None:
+            seeds.append(node)
 
     relevant = set(seeds)
     for seed in seeds:
@@ -54,48 +49,3 @@ def subgraph_data(pipeline, query: str, max_nodes: int = 46) -> dict:
     edges = [{"s": str(u), "t": str(v), "type": d.get("type", "")}
              for u, v, d in sub.edges(data=True)]
     return {"nodes": nodes, "edges": edges}
-
-
-def render_subgraph(pipeline, query: str, max_nodes: int = 40) -> str:
-    """Build a pyvis visualization of the relevant subgraph (legacy HTML fallback)."""
-    from pyvis.network import Network
-
-    entities = pipeline._extract_entities(query)
-    G = pipeline.graph
-
-    # Find matching nodes
-    from rapidfuzz import fuzz
-    seeds = []
-    for entity in entities:
-        for n, d in G.nodes(data=True):
-            if fuzz.partial_ratio(entity.lower(), d.get("name", "").lower()) > 70:
-                seeds.append(n)
-                break
-
-    # BFS expand to 1 hop
-    relevant = set(seeds)
-    for seed in seeds:
-        for neighbor in list(G.neighbors(seed))[:10]:
-            relevant.add(neighbor)
-
-    if not relevant:
-        return "<p>No matching graph nodes found.</p>"
-
-    # Build pyvis
-    net = Network(height="380px", width="100%", bgcolor="transparent",
-                  font_color="white", notebook=False)
-    net.toggle_physics(True)
-
-    subgraph = G.subgraph(list(relevant)[:max_nodes])
-    for n, d in subgraph.nodes(data=True):
-        ntype = d.get("type", "product")
-        color = NODE_COLORS.get(ntype, "#888")
-        label = d.get("name", str(n))[:30]
-        net.add_node(n, label=label, color=color, title=f"{ntype}: {d.get('name', n)}")
-
-    for u, v, d in subgraph.edges(data=True):
-        net.add_edge(u, v, title=d.get("type", ""), color="#3a3550")
-
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False, mode="w") as f:
-        net.save_graph(f.name)
-        return open(f.name).read()

@@ -2,9 +2,11 @@
 
 The whole "graph enriches retrieval" story rests on ESCI products actually existing in the
 Amazon-2023 graph (linked by ASIN). That overlap is NOT guaranteed (see RISKS R1) — so
-SPARDA measures it once at startup and re-checks per query. If a query's retrieved products
-aren't in the graph, the graph-dependent paths are simply not offered for that query, and
-the router degrades to local search.
+SPARDA measures it once at startup: path availability is gated on the graph's own
+properties (edges/communities), and the join rate is reported as an honest informational
+metric. (A per-query re-check — strip graph paths when THIS query's retrieved products
+are absent from the graph — was designed but never wired in; adding it is a routing
+behavior change that needs an end-to-end eval first.)
 
 See SPARDA_BUILD_PLAN.md §6.0.
 """
@@ -26,8 +28,7 @@ def global_coverage(linked_db: dict, graph) -> CoverageReport:
 
     Path availability is gated on the GRAPH's own properties, NOT on the ESCI<->graph ASIN
     join rate. That join only matters for *opportunistic* DANTE-product -> graph-entry
-    expansion (handled per-query by ``query_coverage``); the two graph-native routes stand
-    on their own:
+    expansion; the two graph-native routes stand on their own:
       * ``multi_hop`` links the QUERY's entities to graph nodes (fuzzy match) and traverses
         VERGIL's graph — it never needs a DANTE product to be in the graph.
       * ``global`` reads the community summaries.
@@ -50,15 +51,3 @@ def global_coverage(linked_db: dict, graph) -> CoverageReport:
             f"communities → paths {paths}; ESCI<->graph ASIN join {rate:.2%} "
             f"(informational — gates only opportunistic DANTE→graph expansion)")
     return CoverageReport(rate, paths, note)
-
-
-def query_coverage(retrieved_ids: list[str], graph, base: CoverageReport) -> CoverageReport:
-    """Per-query: are *these* products in the graph? Controls whether expansion runs."""
-    if not retrieved_ids:
-        return base
-    hits = sum(1 for pid in retrieved_ids if graph.has_node(pid))
-    if hits == 0:
-        # nothing this query touched is in the graph → strip graph paths for this query
-        return CoverageReport(base.join_rate, ["local"],
-                              "retrieved products absent from graph; local-only this query")
-    return base

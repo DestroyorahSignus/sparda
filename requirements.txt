@@ -29,7 +29,6 @@ networkx>=3.2
 cdlib>=0.4.0
 leidenalg>=0.10.0
 python-igraph>=0.11.0
-pyvis>=0.3.2
 
 # ── LLM ──
 # Qwen3-4B-Instruct-2507 shared generator: transformers backend on GPU (Modal), or the
@@ -42,8 +41,7 @@ pandas>=2.0.0
 numpy>=1.24.0
 
 # ── Demo / serving ──
-gradio>=4.0.0
-fastapi>=0.110            # ASGI host for gradio.mount_gradio_app (modal_demo.py)
+fastapi>=0.110            # demo API host (static page + JSON/SSE, modal_demo.py)
 
 # ── Utils ──
 rapidfuzz>=3.6.0

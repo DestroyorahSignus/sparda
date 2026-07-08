@@ -3,8 +3,8 @@
 A hand-built single-page frontend (web/index.html — minimalist, constellation-particle
 background, streaming) served by a FastAPI backend that exposes a small JSON/SSE API:
   GET  /              → the static UI
-  POST /api/query     → Server-Sent-Events stream (route meta → answer tokens → citations)
-  GET  /api/graph?q=  → pyvis subgraph HTML
+  POST /api/query     → Server-Sent-Events stream (route meta → answer token deltas → citations)
+  GET  /api/graph?q=  → {nodes, edges} JSON for the frontend's neuron-graph canvas
   GET  /api/splade?q= → {term: weight}
   GET  /api/health    → warm check
 
@@ -13,10 +13,11 @@ Deploy:  (clone dante + vergil as siblings ../dante-src ../vergil-src first)
 
 The pipeline (DanteSearchEngine + VERGIL graph + one shared Qwen3-30B-A3B) is LAZY-loaded on
 the first /api/query, NOT at container start — so the page itself serves fast; only the first
-query pays the model cold-load. ``scaledown_window=120`` releases the A100 after 2 min idle (portfolio demo
-20 min of idle. The frontend is also Vercel-deployable as-is (static): host web/ on a CDN and
-set ``window.SPARDA_API`` to this Modal URL (CORS is open). Image/vendoring/read-only volumes
-match ``modal_run.py``.
+query pays the model cold-load. ``scaledown_window=120`` releases the A100 after 2 min of
+idle — closing the tab sends no signal to Modal, so a longer warm-hold just burns idle GPU
+on a demo that rarely gets two visitors inside the window. The frontend is also
+Vercel-deployable as-is (static): host web/ on a CDN and set ``window.SPARDA_API`` to this
+Modal URL (CORS is open). Image/vendoring/read-only volumes match ``modal_run.py``.
 """
 
 import os
@@ -54,13 +55,7 @@ image = (
                                        # image has no datasets, so it must be explicit (else
                                        # the web container crash-loops on boot: ImportError)
         "numpy==2.2.6",
-        "fastapi>=0.110",              # ASGI host for gradio.mount_gradio_app
-        "gradio>=6.0,<6.19",          # BOUNDED: gradio 6 (messages-format-only, no Chatbot
-                                      # type=) coexists with pandas 3.0.3; but 6.19 conflicts
-                                      # with transformers 4.57.6/accelerate — cap below it so
-                                      # pip resolves to the compatible 6.17/6.18. (gradio 5
-                                      # pins older pandas → conflict, so 6.x is the only lane.)
-        "pyvis>=0.3.2",
+        "fastapi>=0.110",              # the demo API host (static page + JSON/SSE endpoints)
     )
     .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false"})
     # VENDOR dante + vergil source (copy=True layers precede the runtime mount).
@@ -135,8 +130,16 @@ def web():
 
     @api.post("/api/query")
     async def query(req: Request):
-        body = await req.json()
-        q = (body.get("query") or "").strip()
+        # Guarded parse: a malformed body ('not json') or a valid-but-non-dict body
+        # ('[]', '"hi"') must yield the graceful SSE error below, not a raw HTTP 500
+        # (the API is public/CORS-open). Also bound the query length.
+        try:
+            body = await req.json()
+        except Exception:
+            body = None
+        if not isinstance(body, dict):
+            body = {}
+        q = (str(body.get("query") or "")).strip()[:2000]
 
         def gen():
             if not q:
@@ -146,12 +149,17 @@ def web():
                 pipe = get_pipeline()
                 sent_meta = False
                 acc, citations, decision = "", [], None
+                sent_len = 0
                 for acc, decision, citations, _ctx in pipe.answer_stream(q):
                     if not sent_meta and decision is not None:
                         yield sse("meta", {"route": decision.route, "method": decision.method,
                                            "confidence": round(decision.confidence, 2)})
                         sent_meta = True
-                    yield sse("token", {"text": acc})
+                    # Send only the NEW text: re-sending the full accumulated answer on
+                    # every token made the stream O(n^2) bytes over a long generation.
+                    if len(acc) > sent_len:
+                        yield sse("token", {"delta": acc[sent_len:]})
+                        sent_len = len(acc)
                 yield sse("cite", {"citations": [
                     {"type": c["type"], "name": c["name"], "evidence": c["evidence"]}
                     for c in (citations or [])[:10]]})

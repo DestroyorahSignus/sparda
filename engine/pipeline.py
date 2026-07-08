@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 
-from engine.coverage import global_coverage, query_coverage  # noqa: F401 (query_coverage re-exported)
+from engine.coverage import global_coverage
 from engine.router import QueryRouter, RouteDecision
 from engine.local_search import local_search
 from engine.global_search import global_search
@@ -41,12 +41,17 @@ class SpardaPipeline:
                  self.coverage.join_rate * 100, self.coverage.available_paths)
         self._cache: dict[tuple, dict] = {}
 
-    def _prepare(self, query: str):
-        """Route + retrieve + build (decision, prompt, citations, context). Shared by the
-        blocking ``answer`` and the streaming ``answer_stream`` so routing logic lives once."""
+    def _classify(self, query: str) -> RouteDecision:
+        """Route ONCE (may hit the LLM fallback for ambiguous queries) — callers build the
+        cache key from this BEFORE paying for retrieval, so cache hits skip retrieval."""
         decision = self.router.classify(query, coverage=self.coverage)
         log.info("ROUTE q=%r → %s (%s, conf=%.2f) %s",
                  query, decision.route, decision.method, decision.confidence, decision.reason)
+        return decision
+
+    def _prepare(self, query: str, decision: RouteDecision):
+        """Retrieve + build (decision, prompt, citations, context) for an already-routed
+        query. Shared by the blocking ``answer`` and the streaming ``answer_stream``."""
 
         def _local(dec):
             ctx = local_search(query, self.dante, self.graph, self.dante.product_db)
@@ -89,12 +94,14 @@ class SpardaPipeline:
         }
 
     def answer(self, query: str) -> dict:
-        # _prepare classifies ONCE (routing may call the LLM for ambiguous queries — don't
-        # double it just to build a cache key); cache-check on the resolved route after.
-        decision, prompt, citations, context = self._prepare(query)
+        # Classify ONCE, cache-check on (query, route) BEFORE retrieval — the cache used
+        # to be consulted only after _prepare had already paid for routing + retrieval
+        # (incl. multi-hop BFS + rerank), so hits saved nothing but the LLM call.
+        decision = self._classify(query)
         cache_key = (query.strip().lower(), decision.route)
         if cache_key in self._cache:
             return self._cache[cache_key]
+        decision, prompt, citations, context = self._prepare(query, decision)
         # temperature=0.0: deterministic + maximally faithful to the grounded prompt (curbs
         # the gap-filling that invented the "S20 FE").
         result = self._pack(decision, self.llm.generate(prompt, max_tokens=600, temperature=0.0),
@@ -105,12 +112,13 @@ class SpardaPipeline:
     def answer_stream(self, query: str):
         """Yield (partial_answer_text, decision, citations, context) as the LLM streams, so a
         UI can render tokens live and the connection never goes idle. Caches the final result."""
-        decision, prompt, citations, context = self._prepare(query)
+        decision = self._classify(query)
         cache_key = (query.strip().lower(), decision.route)
-        if cache_key in self._cache:  # replay cached answer in one chunk
+        if cache_key in self._cache:  # replay cached answer in one chunk (no retrieval)
             r = self._cache[cache_key]
             yield r["answer"], decision, r["citations"], r["context"]
             return
+        decision, prompt, citations, context = self._prepare(query, decision)
         acc = ""
         for chunk in self.llm.generate_stream(prompt, max_tokens=600, temperature=0.0):
             acc += chunk

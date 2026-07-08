@@ -244,7 +244,7 @@ async function run(){
     var res=await fetch(API+"/api/query",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({query:query})});
     if(!res.ok||!res.body){throw new Error("http "+res.status);}
-    var reader=res.body.getReader(), dec=new TextDecoder(), buf="";
+    var reader=res.body.getReader(), dec=new TextDecoder(), buf="", full="";
     while(true){
       var r=await reader.read(); if(r.done)break;
       buf+=dec.decode(r.value,{stream:true});
@@ -253,7 +253,9 @@ async function run(){
         var ev=parts[k], type=(ev.match(/event: ?(.*)/)||[])[1], data=(ev.match(/data: ?([\s\S]*)/)||[])[1];
         if(!data)continue; var d; try{d=JSON.parse(data);}catch(_){continue;}
         if(type==="meta"){badge.textContent=LABELS[d.route]||d.route; meta.textContent=(d.method||"")+" · conf "+(d.confidence);}
-        else if(type==="token"){ansText.innerHTML=md(d.text)+'<span class="cursor"></span>';}
+        else if(type==="token"){ // server streams deltas (O(n) bytes); tolerate legacy full-text frames
+          full+=(d.delta!==undefined)?d.delta:((d.text!==undefined)?String(d.text).slice(full.length):"");
+          ansText.innerHTML=md(full)+'<span class="cursor"></span>';}
         else if(type==="cite"){renderCites(citeWrap,d.citations);}
         else if(type==="error"){ansText.innerHTML='<span style="color:#e0778a">'+esc(d.message||"error")+'</span>';}
       }

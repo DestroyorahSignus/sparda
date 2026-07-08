@@ -45,32 +45,41 @@ class QueryRouter:
     can show "why this path."
     """
 
+    # Word-boundary anchored: bare substrings misrouted real queries — "vs" is a
+    # substring of "tvs", so "best TVs under $500" went to global. \b-anchored
+    # stems (trend, compatib, accessor, ecosystem) keep the old inflection reach
+    # (trending, compatibility, accessory, ecosystems) without cross-word hits.
     GLOBAL_KEYWORDS = [
-        "compare", "vs", "versus", "trend", "overview", "popular", "best brands",
-        "market", "landscape", "ecosystem", "how do .* compare", "across brands",
-        "which brand", "what brands",
+        r"\bcompar", r"\bvs\b", r"\bversus\b", r"\btrend", r"\boverview", r"\bpopular",
+        r"best brands", r"\bmarket", r"\blandscape", r"\becosystem",
+        r"how do .* compare", r"across brands", r"which brand", r"what brands",
     ]
     MULTI_HOP_KEYWORDS = [
-        "works with", "compatible", "accessories", "from same brand", "bought together",
-        "pair with", "goes with", "along with", "similar to .* but", "alternative.*from",
-        "buy (together )?with", "that fit", "that go with",
+        r"works with", r"\bcompatib", r"\baccessor", r"from same brand",
+        r"bought together", r"pair with", r"goes with", r"along with",
+        r"similar to .* but", r"alternative.*from", r"buy (together )?with",
+        r"that fit", r"that go with",
     ]
     # Below this heuristic confidence we ask the LLM instead of trusting a weak keyword hit.
     LLM_FALLBACK_THRESHOLD = 0.5
 
+    # Compiled once at import — _heuristic used to re-parse every pattern per query.
+    _GLOBAL_RES = [re.compile(kw) for kw in GLOBAL_KEYWORDS]
+    _MULTI_HOP_RES = [re.compile(kw) for kw in MULTI_HOP_KEYWORDS]
+
     def __init__(self, llm=None):
-        self.llm = llm  # shared SpardaLLM; if None, fall back to heuristic-only
+        self.llm = llm  # shared LLM handle; if None, fall back to heuristic-only
 
     def _heuristic(self, query: str) -> RouteDecision:
         q = query.lower()
-        for kw in self.MULTI_HOP_KEYWORDS:
-            if re.search(kw, q):
-                return RouteDecision("multi_hop", "heuristic", 0.85, kw,
-                                     f"matched relational pattern '{kw}'")
-        for kw in self.GLOBAL_KEYWORDS:
-            if re.search(kw, q):
-                return RouteDecision("global", "heuristic", 0.8, kw,
-                                     f"matched market/overview pattern '{kw}'")
+        for rx in self._MULTI_HOP_RES:
+            if rx.search(q):
+                return RouteDecision("multi_hop", "heuristic", 0.85, rx.pattern,
+                                     f"matched relational pattern '{rx.pattern}'")
+        for rx in self._GLOBAL_RES:
+            if rx.search(q):
+                return RouteDecision("global", "heuristic", 0.8, rx.pattern,
+                                     f"matched market/overview pattern '{rx.pattern}'")
         # No strong signal → weak 'local' default, low confidence triggers LLM fallback
         return RouteDecision("local", "heuristic", 0.4, "",
                              "no relational/market keyword — defaulting to product search")

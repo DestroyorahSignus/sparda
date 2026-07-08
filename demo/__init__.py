@@ -1,6 +1,9 @@
-"""SPARDA demo — Gradio UI (route badge + citations) + pyvis graph viz (§7)."""
+"""SPARDA demo helpers — subgraph JSON for the custom frontend's neuron-graph canvas.
 
-from demo.app import create_demo
-from demo.graph_viz import render_subgraph
+(The Gradio UI that used to live here was replaced by the hand-built static frontend in
+web/index.html + the FastAPI backend in modal_demo.py.)
+"""
 
-__all__ = ["create_demo", "render_subgraph"]
+from demo.graph_viz import subgraph_data
+
+__all__ = ["subgraph_data"]

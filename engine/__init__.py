@@ -6,11 +6,10 @@ package parses and imports even when those two deps are absent.
 """
 
 from engine.router import QueryRouter, RouteDecision, ROUTER_CLASSIFY_PROMPT
-from engine.coverage import CoverageReport, global_coverage, query_coverage
+from engine.coverage import CoverageReport, global_coverage
 from engine.local_search import local_search
 from engine.global_search import global_search
 from engine.multi_hop_search import multi_hop_search
-from engine.llm import SpardaLLM
 from engine.pipeline import SpardaPipeline
 
 __all__ = [
@@ -20,9 +19,7 @@ __all__ = [
     "ROUTER_CLASSIFY_PROMPT",
     "CoverageReport",
     "global_coverage",
-    "query_coverage",
     "local_search",
     "global_search",
     "multi_hop_search",
-    "SpardaLLM",
 ]

@@ -72,8 +72,6 @@ image = (
         "pandas==3.0.3",
         "numpy==2.2.6",
         "datasets==5.0.0",             # link stage: load ESCI for Complement pairs
-        "gradio>=4.0.0",
-        "pyvis>=0.3.2",
     )
     .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false"})
     # VENDOR dante + vergil source (copy=True layers must precede the runtime mount below).
