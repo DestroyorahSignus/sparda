@@ -59,7 +59,8 @@ image = (
         "numpy==2.2.6",
         "fastapi>=0.110",              # the demo API host (static page + JSON/SSE endpoints)
     )
-    .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false"})
+    .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false",
+          "VLLM_CACHE_ROOT": "/vllm-cache"})
     # VENDOR dante + vergil source (copy=True layers precede the runtime mount).
     .add_local_dir(DANTE_PKG, "/root/dante", copy=True)
     .add_local_dir(VERGIL_PKG, "/root/vergil", copy=True)
@@ -78,6 +79,10 @@ VOLUMES = {
     "/dante-artifacts": _read_only(modal.Volume.from_name("dante-artifacts", create_if_missing=True)),
     "/vergil-artifacts": _read_only(modal.Volume.from_name("vergil-artifacts", create_if_missing=True)),
     "/sparda-artifacts": _read_only(modal.Volume.from_name("sparda-artifacts", create_if_missing=True)),
+    # READ-WRITE: vLLM writes its torch.compile artifacts here (~/.cache/vllm is
+    # symlinked to it via VLLM_CACHE_ROOT below); only the first-ever cold start pays
+    # the full compile, later cold starts reuse the cache (committed on scaledown).
+    "/vllm-cache": modal.Volume.from_name("sparda-vllm-cache", create_if_missing=True),
 }
 
 
