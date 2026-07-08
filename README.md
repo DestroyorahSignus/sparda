@@ -25,9 +25,10 @@ honest list of real bugs fixed to get there (see [Engineering journey](#engineer
 | **Router accuracy** | **15/15 = 1.000** on the typed test set; all three routes execute end-to-end |
 | **Routes** | `local` (DANTE + 1-hop graph expand) · `global` (VERGIL community summaries) · `multi_hop` (VERGIL graph traversal + path citations) |
 | **Generator** | **Qwen3-30B-A3B-Instruct-2507** (MoE, 30B total / 3B active, Apache-2.0), temp 0.0, **token-streamed** |
+| **Serving** | **vLLM** (CUDA graphs, continuous batching): **~113 tok/s** decode — a ~500-token answer in **~5s** (HF `.generate()` baseline: ~6 tok/s / ~75s) |
 | **Graph** | VERGIL's own ~570K-edge product graph + **1,209** synthesized `complement_of` ("goes-with") edges |
 | **Cross-dataset join** | **0.82%** ASIN overlap (2,898 of 351,961 ESCI × 49,997 electronics) — reported honestly; see [Limitations](#limitations) |
-| **Deployment** | Modal ASGI + Gradio, one A100-80GB, scale-to-zero, read-only artifact volumes |
+| **Deployment** | Modal FastAPI + hand-built static frontend (SSE delta streaming, canvas neuron-graph; also CDN-hosted on Vercel), one A100-80GB, scale-to-zero (10-min warm window), read-only artifact volumes |
 
 The 0.82% number is deliberately front-and-center. SPARDA's value is the **router**, not a
 deep cross-dataset fusion — `multi_hop` runs on VERGIL's own graph via query→entity linking,
@@ -154,15 +155,20 @@ functions, so the module imports fine in CI where neither dependency is installe
 
 ### Deployment
 
-`modal_demo.py` builds the pipeline **once per container** inside the ASGI factory (not at
-import) and serves a Gradio Blocks UI via Modal's ASGI pattern on one **A100-80GB**.
-`scaledown_window=300` keeps the (expensive) warm model resident for 5 minutes of idle before
-scaling to zero. `@modal.concurrent(max_inputs=8)` lets one warm model serve several UI
-requests. DANTE + VERGIL are **vendored as source** via `add_local_dir` from the
-`../dante-src` / `../vergil-src` siblings (no private-repo auth at image-build time). The
-three artifact volumes (`dante-artifacts`, `vergil-artifacts`, `sparda-artifacts`) mount
-**read-only** — the 30B is pre-cached into the volume by `fetch_model.py` beforehand, since a
-read-only volume can't download at serve time.
+`modal_demo.py` serves a **FastAPI** backend (static page + JSON/SSE API) with a hand-built
+single-page frontend (`web/index.html`: constellation-particle background, glass command bar,
+SSE **delta**-streaming client, canvas neuron-graph renderer) on one **A100-80GB**. The same
+static page is CDN-hosted on **Vercel** (`window.SPARDA_API` → the Modal URL; CORS is open).
+The pipeline is **lazy-loaded on the first query** (page itself serves in seconds); the
+generator runs under **vLLM** (CUDA graphs, batch-1-8 capture, compile cache persisted to a
+volume so only the first-ever cold start pays full compile). `scaledown_window=600` keeps the
+warm model resident for 10 minutes of idle before scaling to zero — closing the tab sends no
+signal, so the window is the whole idle-cost story. `@modal.concurrent(max_inputs=8)` lets
+one warm model serve several requests. DANTE + VERGIL are **vendored as source** via
+`add_local_dir` from the `../dante-src` / `../vergil-src` siblings (no private-repo auth at
+image-build time). The three artifact volumes (`dante-artifacts`, `vergil-artifacts`,
+`sparda-artifacts`) mount **read-only** — the 30B is pre-cached by `fetch_model.py`
+beforehand, since a read-only volume can't download at serve time.
 
 ---
 
@@ -267,7 +273,54 @@ honestly (including one thing I initially got wrong and corrected).
 ### 10. Deploy gotcha (worth remembering)
 - `modal app stop` on a *deployed* app **404s** until you re-deploy, and stale warm
   containers keep serving old code within the scaledown window. The reliable update for a
-  deployed app is **stop + deploy**, not stop alone.
+  deployed app is **stop + deploy**, not stop alone. Corollary: a container spun up *during*
+  a deploy keeps draining on the **old** code — a post-deploy "no change" report can be a
+  stale container, not a failed deploy. Verify against a fresh container.
+
+### 11. Gradio → hand-built frontend
+- Gradio was slow to load (~110s page), fought custom styling (`head=` silently ignored on
+  `gr.Blocks()` for mounted apps), and pinned awkwardly against pandas 3 / transformers 4.57.
+  Replaced with a **self-contained static page** (vanilla JS: particle canvas, SSE streaming
+  client, tiny markdown renderer, force-directed neuron-graph canvas) + a **FastAPI** JSON/SSE
+  backend, and the pipeline became **lazy-loaded** → page load **110s → ~7s**. Bonus: the
+  static page deploys unchanged to a CDN (Vercel) with the Modal URL as its API.
+
+### 12. The code-quality sweep (audit → fix → verify)
+- A file-by-file audit of all three repos surfaced one bug CLASS twice: **substring keyword
+  routing** — `"vs"` matched inside `"tvs"`, silently misrouting *"best TVs under $500"* to
+  global community search (both here and in VERGIL's own router). Fixed with word-boundary/
+  stem patterns; **18/18** unit routing checks and a re-run **15/15 e2e** confirmed zero
+  regression. Same sweep: the answer cache was consulted only *after* retrieval had already
+  run (hits saved nothing but the LLM call) → classify → cache-check → retrieve; `/api/query`
+  500'd on malformed JSON bodies → graceful SSE error; SSE re-sent the full accumulated
+  answer every token (**O(n²)** bytes) → deltas; entity linking fuzzy-scanned all ~65K graph
+  nodes per entity per query (twice per user action) → shared per-graph cached index
+  (`engine/graph_index.py`); plus a dead-code purge (the legacy Gradio UI, an unused LLM
+  wrapper, an unwired coverage gate, gradio+pyvis dropped from both Modal images).
+
+### 13. Serving speed: HF → vLLM (~19x)
+- HF `.generate()` ran the 30B-A3B at **~6 tok/s** — a 500-token answer took ~75s and the
+  demo felt broken. Swapped the generator to **vLLM** (AsyncLLMEngine behind the same sync
+  `generate/generate_stream` API, bridged via a background event loop):
+
+  | serving | decode | ~500-token answer |
+  |---|---|---|
+  | HF `.generate()` | ~6 tok/s | ~75s |
+  | vLLM, eager | ~19 tok/s | ~25s |
+  | **vLLM + CUDA graphs** | **~113 tok/s** | **~5s** |
+
+  Eager MoE decode is kernel-launch bound — CUDA graphs are where the win is. Graph capture
+  initially ballooned cold-start to ~6 min; trimmed capture to batch sizes 1-8 and persisted
+  vLLM's torch.compile cache to a volume so only the first-ever cold start pays full compile.
+
+### 14. From grounded-but-flat to grounded synthesis
+- The anti-hallucination prompts (journey #8) overcorrected: answers became item-by-item
+  catalog recitals. Rewrote the three answer prompts with a shared **style contract** —
+  verdict first, group + compare on attributes present in the item text, name the trade-off,
+  call out caveats/gaps (**Top picks / Trade-offs / Watch out**) — and relaxed exactly one
+  grounding rule: the model may be **decisive about FIT** (features/price in the listed text)
+  but still never about unverifiable quality (ratings/reputation). Grounding is otherwise
+  unchanged: only retrieved items, exact names, no outside comparisons.
 
 ---
 
