@@ -104,7 +104,7 @@ class SpardaPipeline:
         decision, prompt, citations, context = self._prepare(query, decision)
         # temperature=0.0: deterministic + maximally faithful to the grounded prompt (curbs
         # the gap-filling that invented the "S20 FE").
-        result = self._pack(decision, self.llm.generate(prompt, max_tokens=600, temperature=0.0),
+        result = self._pack(decision, self.llm.generate(prompt, max_tokens=800, temperature=0.0),
                             citations, context)
         self._cache[cache_key] = result
         return result
@@ -120,7 +120,7 @@ class SpardaPipeline:
             return
         decision, prompt, citations, context = self._prepare(query, decision)
         acc = ""
-        for chunk in self.llm.generate_stream(prompt, max_tokens=600, temperature=0.0):
+        for chunk in self.llm.generate_stream(prompt, max_tokens=800, temperature=0.0):
             acc += chunk
             yield acc, decision, citations, context
         self._cache[cache_key] = self._pack(decision, acc, citations, context)

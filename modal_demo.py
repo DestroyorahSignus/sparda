@@ -31,11 +31,13 @@ VERGIL_PKG = os.path.abspath(os.path.join(HERE, "..", "vergil-src", "vergil"))
 
 app = modal.App("sparda-demo")
 
-# Same shared ML stack as modal_run.py (kept in sync deliberately).
+# Same shared ML stack as modal_run.py — EXCEPT: this serving image adds vLLM (10x the
+# decode speed of HF .generate() on the 30B-A3B; HF crawled at ~5-10 tok/s) and drops the
+# explicit torch pin so vLLM installs its own tightly-pinned torch build.
 image = (
     modal.Image.debian_slim(python_version="3.11")
     .pip_install(
-        "torch==2.12.1",
+        "vllm==0.11.0",                # brings its own torch; QwenLLM(backend='vllm')
         "transformers==4.57.6",
         "sentence-transformers==4.1.0",
         "rerankers[transformers]==0.10.0",

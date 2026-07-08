@@ -196,8 +196,11 @@ def build_pipeline(
     encoder = SentenceTransformer(VERGIL_ENCODER_NAME)  # matches summary_embeddings dims
 
     if llm is None:
-        print(f"[sparda] loading shared generator: {QWEN_MODEL}")
-        llm = QwenLLM(QWEN_MODEL, backend="transformers")
+        # vllm backend = ~10x HF .generate() decode (HF ran the 30B-A3B at ~5-10 tok/s —
+        # the demo felt crawling). Env-switchable for images without vllm installed.
+        backend = os.environ.get("SPARDA_LLM_BACKEND", "vllm")
+        print(f"[sparda] loading shared generator: {QWEN_MODEL} (backend={backend})")
+        llm = QwenLLM(QWEN_MODEL, backend=backend)
 
     # linked_db defaults to dante.product_db inside the pipeline, so coverage.join_rate
     # is measured honestly over the WHOLE DANTE catalog vs the graph (not just overlaps).
