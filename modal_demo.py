@@ -58,6 +58,7 @@ image = (
                                        # the web container crash-loops on boot: ImportError)
         "numpy==2.2.6",
         "fastapi>=0.110",              # the demo API host (static page + JSON/SSE endpoints)
+        "anthropic>=0.116",            # Claude comparison arm (engine/claude_llm.py)
     )
     .env({"HF_HOME": "/sparda-artifacts/hf", "TOKENIZERS_PARALLELISM": "false",
           "VLLM_CACHE_ROOT": "/vllm-cache"})
@@ -86,8 +87,12 @@ VOLUMES = {
 }
 
 
+# Personal Anthropic key for the Claude arm. An EMPTY value keeps Claude cleanly
+# disabled (build_pipeline checks for a non-empty ANTHROPIC_API_KEY); set the real
+# key with:  modal secret create anthropic-personal ANTHROPIC_API_KEY=sk-ant-...
 @app.function(image=image, volumes=VOLUMES, gpu="A100-80GB", scaledown_window=600,
-              timeout=60 * 60)
+              timeout=60 * 60,
+              secrets=[modal.Secret.from_name("anthropic-personal")])
 @modal.concurrent(max_inputs=8)   # one warm model serves several requests concurrently
 @modal.asgi_app()
 def web():
@@ -133,7 +138,9 @@ def web():
 
     @api.get("/api/health")
     def health():
-        return {"ok": True, "warm": "p" in _cache}
+        import os as _os
+        return {"ok": True, "warm": "p" in _cache,
+                "claude": bool(_os.environ.get("ANTHROPIC_API_KEY"))}
 
     @api.post("/api/query")
     async def query(req: Request):
@@ -147,6 +154,9 @@ def web():
         if not isinstance(body, dict):
             body = {}
         q = (str(body.get("query") or "")).strip()[:2000]
+        generator = str(body.get("generator") or "local")
+        if generator not in ("local", "claude"):
+            generator = "local"
 
         def gen():
             if not q:
@@ -157,10 +167,11 @@ def web():
                 sent_meta = False
                 acc, citations, decision = "", [], None
                 sent_len = 0
-                for acc, decision, citations, _ctx in pipe.answer_stream(q):
+                for acc, decision, citations, _ctx in pipe.answer_stream(q, generator=generator):
                     if not sent_meta and decision is not None:
                         yield sse("meta", {"route": decision.route, "method": decision.method,
-                                           "confidence": round(decision.confidence, 2)})
+                                           "confidence": round(decision.confidence, 2),
+                                           "generator": generator})
                         sent_meta = True
                     # Send only the NEW text: re-sending the full accumulated answer on
                     # every token made the stream O(n^2) bytes over a long generation.

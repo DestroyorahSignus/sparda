@@ -56,6 +56,18 @@
   .chip{background:var(--glass);border:1px solid var(--line2);color:#aab0c0;border-radius:999px;
     font-size:12px;padding:6px 13px;cursor:pointer;transition:transform .15s,border-color .2s,color .2s,background .2s;font-family:var(--sans)}
   .chip:hover{transform:translateY(-1px);color:#e8eaf0;border-color:rgba(var(--acc),.5);background:rgba(var(--acc),.10)}
+  /* generator switch (SLM vs Claude) */
+  .genrow{display:flex;align-items:center;gap:10px;margin:12px 0 14px;animation:rise .55s ease .1s both}
+  .genlbl{font-size:10px;letter-spacing:1.2px;text-transform:uppercase;color:var(--faint)}
+  .gen-switch{display:inline-flex;border:1px solid var(--line2);border-radius:999px;overflow:hidden;background:var(--glass)}
+  .gen-switch button{background:transparent;border:0;color:#aab0c0;font-size:12px;padding:6px 14px;cursor:pointer;font-family:inherit;transition:background .18s,color .18s}
+  .gen-switch button.on{background:rgba(var(--acc),.18);color:#e8eaf0}
+  .gen-switch button:not(.on):hover{color:#e8eaf0}
+  /* answer panes: single by default, 2-up grid in compare mode */
+  .panes.split{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .pane .genhead{font-size:10px;letter-spacing:1.1px;text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+  .panes.split .pane{min-width:0;border:1px solid var(--line2);border-radius:12px;padding:12px 14px;background:var(--glass)}
+  @media(max-width:860px){.panes.split{grid-template-columns:1fr}}
 
   /* layout */
   .grid{display:grid;grid-template-columns:1.7fr 1fr;gap:16px;animation:rise .55s ease .18s both}
@@ -129,16 +141,21 @@
   </div>
   <div class="hint">⏎ to search · routed automatically to DANTE or VERGIL · first query warms the model (~60–90s)</div>
 
+  <div class="genrow">
+    <span class="genlbl">generator</span>
+    <div class="gen-switch" id="genSwitch">
+      <button data-gen="local" class="on">⚡ Qwen-30B</button>
+      <button data-gen="claude">✦ Claude</button>
+      <button data-gen="compare">⚔ Compare</button>
+    </div>
+  </div>
+
   <div class="chips" id="chips"></div>
 
   <div class="grid">
     <div class="panel answer" id="answerPanel">
       <div class="placeholder" id="ph">Ask something to begin — the answer streams in with its route and citations.</div>
-      <div id="answer" style="display:none">
-        <div><span class="badge" id="badge"></span><span class="meta" id="meta"></span></div>
-        <div class="ans" id="ansText"></div>
-        <div id="citeWrap"></div>
-      </div>
+      <div id="answer" style="display:none"><div id="panes"></div></div>
     </div>
 
     <div class="panel">
@@ -227,22 +244,34 @@ var qEl=document.getElementById("q"), goEl=document.getElementById("go"),
 var busy=false;
 function setBusy(b){busy=b;goEl.disabled=b;goEl.textContent=b?"…":"Search";}
 
-async function run(){
-  var query=qEl.value.trim(); if(!query||busy)return;
-  setBusy(true);
-  document.getElementById("ph").style.display="none";
-  var ansBox=document.getElementById("answer"); ansBox.style.display="block";
-  var badge=document.getElementById("badge"), meta=document.getElementById("meta"),
-      ansText=document.getElementById("ansText"), citeWrap=document.getElementById("citeWrap");
-  badge.textContent=""; meta.textContent=""; citeWrap.innerHTML="";
+// ── generator switch (SLM vs Claude) ──
+var GEN="local";
+var GEN_LABEL={local:"⚡ Qwen-30B · self-hosted", claude:"✦ Claude Opus 4.8 · API"};
+(function(){
+  var sw=document.getElementById("genSwitch");
+  sw.addEventListener("click",function(e){
+    var b=e.target.closest("button"); if(!b||busy)return;
+    GEN=b.getAttribute("data-gen");
+    Array.prototype.forEach.call(sw.querySelectorAll("button"),function(x){
+      x.classList.toggle("on",x===b);});
+  });
+})();
+
+function makePane(genLabel){
+  var p=document.createElement("div"); p.className="pane";
+  p.innerHTML='<div class="genhead">'+genLabel+'</div>'+
+    '<div><span class="badge"></span><span class="meta"></span></div>'+
+    '<div class="ans"></div><div class="cites"></div>';
+  return p;
+}
+
+async function streamInto(query,generator,pane){
+  var badge=pane.querySelector(".badge"), meta=pane.querySelector(".meta"),
+      ansText=pane.querySelector(".ans"), citeWrap=pane.querySelector(".cites");
   ansText.innerHTML='<span style="color:var(--faint)">routing + retrieving…</span><span class="cursor"></span>';
-
-  // side panels
-  loadGraph(query); loadSplade(query);
-
   try{
     var res=await fetch(API+"/api/query",{method:"POST",headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({query:query})});
+      body:JSON.stringify({query:query,generator:generator})});
     if(!res.ok||!res.body){throw new Error("http "+res.status);}
     var reader=res.body.getReader(), dec=new TextDecoder(), buf="", full="";
     while(true){
@@ -262,6 +291,28 @@ async function run(){
     }
     ansText.innerHTML=ansText.innerHTML.replace(/<span class="cursor"><\/span>/,""); // drop cursor
   }catch(e){ansText.innerHTML='<span style="color:#e0778a">Request failed: '+esc(String(e))+'. The model may be cold-starting — try again in a moment.</span>';}
+}
+
+async function run(){
+  var query=qEl.value.trim(); if(!query||busy)return;
+  setBusy(true);
+  document.getElementById("ph").style.display="none";
+  document.getElementById("answer").style.display="block";
+  var panes=document.getElementById("panes"); panes.innerHTML="";
+
+  // side panels (shared — retrieval is identical across generators)
+  loadGraph(query); loadSplade(query);
+
+  if(GEN==="compare"){ // one retrieval story, two generators, streamed concurrently
+    panes.className="panes split";
+    var a=makePane(GEN_LABEL.local), b=makePane(GEN_LABEL.claude);
+    panes.appendChild(a); panes.appendChild(b);
+    await Promise.all([streamInto(query,"local",a), streamInto(query,"claude",b)]);
+  }else{
+    panes.className="panes";
+    var p=makePane(GEN_LABEL[GEN]); panes.appendChild(p);
+    await streamInto(query,GEN,p);
+  }
   setBusy(false);
 }
 function renderCites(wrap,cites){

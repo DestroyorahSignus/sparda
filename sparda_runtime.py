@@ -202,6 +202,15 @@ def build_pipeline(
         print(f"[sparda] loading shared generator: {QWEN_MODEL} (backend={backend})")
         llm = QwenLLM(QWEN_MODEL, backend=backend)
 
+    # Optional Claude API arm for the "SLM vs Claude" demo toggle — same retrieval,
+    # generation switches per query. Only constructed when a key is present (Modal
+    # secret); absent/empty key -> the demo cleanly reports Claude as unavailable.
+    claude_llm = None
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        from engine.claude_llm import ClaudeLLM
+        claude_llm = ClaudeLLM()
+        print(f"[sparda] Claude comparison arm enabled ({claude_llm.model})")
+
     # linked_db defaults to dante.product_db inside the pipeline, so coverage.join_rate
     # is measured honestly over the WHOLE DANTE catalog vs the graph (not just overlaps).
     pipeline = SpardaPipeline(
@@ -211,5 +220,6 @@ def build_pipeline(
         communities=summaries,
         summary_embs=summary_embs,
         encoder=encoder,
+        claude_llm=claude_llm,
     )
     return pipeline

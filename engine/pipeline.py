@@ -27,10 +27,13 @@ log = logging.getLogger("sparda")
 
 class SpardaPipeline:
     def __init__(self, dante, vergil_graph, llm, communities, summary_embs, encoder,
-                 linked_db=None):
+                 linked_db=None, claude_llm=None):
         self.dante = dante
         self.graph = vergil_graph
         self.llm = llm                       # ONE shared Qwen instance (§6.5)
+        # Optional frontier-API comparison arm ("SLM vs Claude" demo toggle):
+        # same routing + retrieval, generation switches per query.
+        self.claude_llm = claude_llm
         self.communities = communities
         self.summary_embs = summary_embs
         self.encoder = encoder
@@ -93,37 +96,52 @@ class SpardaPipeline:
             "context": context,
         }
 
-    def answer(self, query: str) -> dict:
-        # Classify ONCE, cache-check on (query, route) BEFORE retrieval — the cache used
-        # to be consulted only after _prepare had already paid for routing + retrieval
-        # (incl. multi-hop BFS + rerank), so hits saved nothing but the LLM call.
+    def _pick_llm(self, generator: str):
+        """'local' -> the self-hosted Qwen; 'claude' -> the Claude API arm (if configured)."""
+        if generator == "claude":
+            if self.claude_llm is None:
+                raise RuntimeError(
+                    "Claude generator not configured (set the ANTHROPIC_API_KEY secret)")
+            return self.claude_llm
+        return self.llm
+
+    def answer(self, query: str, generator: str = "local") -> dict:
+        # Classify ONCE, cache-check on (query, route, generator) BEFORE retrieval — the
+        # cache used to be consulted only after _prepare had already paid for routing +
+        # retrieval (incl. multi-hop BFS + rerank), so hits saved nothing but the LLM call.
         decision = self._classify(query)
-        cache_key = (query.strip().lower(), decision.route)
+        cache_key = (query.strip().lower(), decision.route, generator)
         if cache_key in self._cache:
             return self._cache[cache_key]
+        llm = self._pick_llm(generator)
         decision, prompt, citations, context = self._prepare(query, decision)
         # temperature=0.0: deterministic + maximally faithful to the grounded prompt (curbs
-        # the gap-filling that invented the "S20 FE").
-        result = self._pack(decision, self.llm.generate(prompt, max_tokens=800, temperature=0.0),
+        # the gap-filling that invented the "S20 FE"). ClaudeLLM ignores it (removed on
+        # Opus 4.8) — grounding lives in the prompt either way.
+        result = self._pack(decision, llm.generate(prompt, max_tokens=800, temperature=0.0),
                             citations, context)
+        result["generator"] = generator
         self._cache[cache_key] = result
         return result
 
-    def answer_stream(self, query: str):
+    def answer_stream(self, query: str, generator: str = "local"):
         """Yield (partial_answer_text, decision, citations, context) as the LLM streams, so a
         UI can render tokens live and the connection never goes idle. Caches the final result."""
         decision = self._classify(query)
-        cache_key = (query.strip().lower(), decision.route)
+        cache_key = (query.strip().lower(), decision.route, generator)
         if cache_key in self._cache:  # replay cached answer in one chunk (no retrieval)
             r = self._cache[cache_key]
             yield r["answer"], decision, r["citations"], r["context"]
             return
+        llm = self._pick_llm(generator)
         decision, prompt, citations, context = self._prepare(query, decision)
         acc = ""
-        for chunk in self.llm.generate_stream(prompt, max_tokens=800, temperature=0.0):
+        for chunk in llm.generate_stream(prompt, max_tokens=800, temperature=0.0):
             acc += chunk
             yield acc, decision, citations, context
-        self._cache[cache_key] = self._pack(decision, acc, citations, context)
+        result = self._pack(decision, acc, citations, context)
+        result["generator"] = generator
+        self._cache[cache_key] = result
 
     # ── citation builders (uniform {type, id, name, evidence}) ──
     def _cite_products(self, results):
