@@ -162,6 +162,13 @@ def web():
             if not q:
                 yield sse("error", {"message": "empty query"})
                 return
+            # Fail fast BEFORE the pipeline cold-load: a Compare click shouldn't wait
+            # minutes just to learn the Claude arm has no key configured.
+            import os as _os
+            if generator == "claude" and not _os.environ.get("ANTHROPIC_API_KEY"):
+                yield sse("error", {"message": "Claude arm not configured — set the "
+                                    "anthropic-personal Modal secret (ANTHROPIC_API_KEY)"})
+                return
             try:
                 pipe = get_pipeline()
                 sent_meta = False
