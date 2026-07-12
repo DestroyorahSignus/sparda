@@ -4,6 +4,7 @@
 > vLLM-served Qwen3-30B (+ a Claude Opus 4.8 comparison arm), route badges, neuron knowledge graph.
 > The Modal footprint was fully torn down after export; all artifacts are archived offline and every
 > stage is reproducible from this repo (`modal_run.py`, `modal_demo.py` — see How to run).
+> **Run it locally without Modal → [LOCAL_RUN.md](LOCAL_RUN.md).**
 
 SPARDA is a **query router** for e-commerce discovery. It classifies each incoming query,
 routes it to the right retrieval strategy across **two of my own standalone engines**, and
