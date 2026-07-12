@@ -1,7 +1,9 @@
 # ⚔️ SPARDA — A Query Router that Composes Two Retrieval Engines into One Answer
 
-> **Live demo → [https://rapid-claims--sparda-demo-web.modal.run](https://rapid-claims--sparda-demo-web.modal.run)**
-> Ask about products in natural language; watch it pick a route, stream a grounded answer, and cite its sources.
+> **Demo (decommissioned):** a live Modal deployment ran Jun–Jul 2026 — custom streaming frontend,
+> vLLM-served Qwen3-30B (+ a Claude Opus 4.8 comparison arm), route badges, neuron knowledge graph.
+> The Modal footprint was fully torn down after export; all artifacts are archived offline and every
+> stage is reproducible from this repo (`modal_run.py`, `modal_demo.py` — see How to run).
 
 SPARDA is a **query router** for e-commerce discovery. It classifies each incoming query,
 routes it to the right retrieval strategy across **two of my own standalone engines**, and
